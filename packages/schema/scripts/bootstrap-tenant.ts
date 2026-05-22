@@ -5,7 +5,7 @@
 //   bun packages/schema/scripts/bootstrap-tenant.ts \
 //     --slug acme --display-name "Acme, Inc." \
 //     --provider anthropic --api-key sk-ant-... \
-//     --tools http_request,web_search
+//     --tools http_request
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
