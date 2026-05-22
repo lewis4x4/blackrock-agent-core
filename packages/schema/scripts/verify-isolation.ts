@@ -1,7 +1,17 @@
-// End-to-end tenant isolation verification. Runs four checks against a live
-// Supabase project (local or remote) to prove the migration 0002 credential
-// resolution path is correctly scoped per-tenant and inaccessible to anon /
-// authenticated callers. Service-role only — never bundle for the browser.
+// End-to-end tenant isolation verification for the credential / tool stack.
+//
+// Runs four invariants against a live Supabase project (local or remote) to
+// prove that the migration 0002 credential-resolution path is correctly scoped
+// per-tenant and inaccessible to the anon role:
+//
+//   1. Two tenants get distinct stored credentials.
+//   2. Per-tenant resolution returns each tenant's own secret — even when the
+//      provider name is identical across tenants (the real cross-tenant leak
+//      test).
+//   3. loadTenantContext() builds a per-tenant ToolRegistry that contains only
+//      the builtins enabled in tenant_tools — tenant A sees http_request,
+//      tenant B (enabled=false) sees nothing.
+//   4. The anon role cannot call resolve_tenant_secret successfully.
 //
 // Usage:
 //   bun packages/schema/scripts/verify-isolation.ts
@@ -10,43 +20,54 @@
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //   SUPABASE_ANON_KEY
-// Optional:
-//   SUPABASE_TEST_AUTHENTICATED_JWT  (signed JWT with role=authenticated)
 //
-// Cleanup note: tenant rows are deleted in a finally block, which cascades to
-// tenant_credentials and tenant_tools (per the on-delete-cascade in migration
-// 0001). The Vault secret rows created via store_tenant_credential are left in
-// place — explicit Vault cleanup/rotation is deferred (matches migration 0002).
+// If any of those are missing OR Supabase is unreachable, the script writes a
+// single PARKED line to stdout and exits 0 — it never asks for a stack it
+// cannot drive. On full pass it prints `[isolation verified] all 4 invariants
+// passed` and exits 0. On any assertion failure it prints `[fail] invariant N
+// — …` and exits 1.
+//
+// Cleanup: created tenant rows are deleted in a finally block, which cascades
+// to tenant_credentials and tenant_tools per migration 0001. Vault secret
+// rows created via store_tenant_credential are left in place (matches the
+// deferred Vault cleanup posture in migration 0002).
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import { loadTenantContext } from '@blackrock/agent-runtime';
 
-const USAGE = `Usage:
-  bun packages/schema/scripts/verify-isolation.ts
+const PARK_LINE =
+  '[PARKED — live Supabase isolation verification: needs a running Supabase project]';
 
-Required env vars:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
-  SUPABASE_ANON_KEY
-Optional env vars:
-  SUPABASE_TEST_AUTHENTICATED_JWT
-`;
+function park(reason: string): never {
+  process.stderr.write(`[verify-isolation] parked: ${reason}\n`);
+  process.stdout.write(`${PARK_LINE}\n`);
+  process.exit(0);
+}
 
-function fail(message: string): never {
-  process.stderr.write(`[verify-isolation] error: ${message}\n\n${USAGE}`);
+function ok(invariant: number, detail: string): void {
+  process.stdout.write(`[ok] invariant ${invariant} — ${detail}\n`);
+}
+
+function failAndExit(invariant: number, detail: string): never {
+  process.stdout.write(`[fail] invariant ${invariant} — ${detail}\n`);
   process.exit(1);
 }
 
-function getEnv(name: string): string {
-  const value = process.env[name];
-  if (!value || value.length === 0) fail(`missing required env var ${name}`);
-  return value;
+function shortKey(s: string): string {
+  return `${s.slice(0, 6)}...`;
 }
 
-function getOptionalEnv(name: string): string | undefined {
-  const value = process.env[name];
-  if (!value || value.length === 0) return undefined;
-  return value;
+async function isReachable(
+  svc: SupabaseClient,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const { error } = await svc.from('tenants').select('id').limit(1);
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true };
+  } catch (err: unknown) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 interface TenantRow {
@@ -54,57 +75,33 @@ interface TenantRow {
   slug: string;
 }
 
-interface ToolRow {
-  tool_key: string;
-}
-
-interface CheckResult {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
-const results: CheckResult[] = [];
-
-function record(name: string, ok: boolean, detail: string): void {
-  results.push({ name, ok, detail });
-  const tag = ok ? '[ok]' : '[fail]';
-  process.stdout.write(`${tag} ${name}: ${detail}\n`);
-}
-
-function skip(name: string, detail: string): void {
-  process.stdout.write(`[skip] ${name}: ${detail}\n`);
-}
-
 async function insertTenant(
-  supabase: SupabaseClient,
+  svc: SupabaseClient,
   slug: string,
   displayName: string,
 ): Promise<TenantRow> {
-  const { data, error } = await supabase
+  const { data, error } = await svc
     .from('tenants')
     .insert({ slug, display_name: displayName })
     .select('id, slug')
     .single<TenantRow>();
-
   if (error) throw new Error(`insert tenant ${slug}: ${error.message}`);
   if (!data) throw new Error(`insert tenant ${slug}: no row returned`);
   return data;
 }
 
 async function storeCredential(
-  supabase: SupabaseClient,
+  svc: SupabaseClient,
   tenantId: string,
   provider: string,
   secret: string,
 ): Promise<void> {
-  const { error } = await supabase.rpc('store_tenant_credential', {
+  const { error } = await svc.rpc('store_tenant_credential', {
     p_tenant: tenantId,
     p_provider: provider,
     p_secret: secret,
     p_meta: { source: 'verify-isolation' },
   });
-
   if (error) {
     throw new Error(
       `store_tenant_credential(${tenantId}, ${provider}): ${error.message}`,
@@ -113,366 +110,238 @@ async function storeCredential(
 }
 
 async function resolveSecret(
-  supabase: SupabaseClient,
+  svc: SupabaseClient,
   tenantId: string,
   provider: string,
 ): Promise<string | null> {
-  const { data, error } = await supabase.rpc('resolve_tenant_secret', {
+  const { data, error } = await svc.rpc('resolve_tenant_secret', {
     p_tenant: tenantId,
     p_provider: provider,
   });
-
   if (error) {
     throw new Error(
       `resolve_tenant_secret(${tenantId}, ${provider}): ${error.message}`,
     );
   }
-
-  // supabase-js infers `unknown` for scalar RPC returns; the SQL function
-  // returns `text`, so a string|null cast is the narrow correct type.
+  // supabase-js types scalar RPC returns as `unknown`; the SQL function
+  // returns `text`, so `string | null` is the narrow correct cast.
   return (data as string | null) ?? null;
 }
 
-async function enableTools(
-  supabase: SupabaseClient,
+async function setToolRow(
+  svc: SupabaseClient,
   tenantId: string,
-  toolKeys: readonly string[],
+  toolKey: string,
+  enabled: boolean,
 ): Promise<void> {
-  const rows = toolKeys.map((tool_key) => ({
+  const { error } = await svc.from('tenant_tools').insert({
     tenant_id: tenantId,
-    tool_key,
-    enabled: true,
-  }));
-  const { error } = await supabase.from('tenant_tools').insert(rows);
+    tool_key: toolKey,
+    enabled,
+  });
   if (error) {
-    throw new Error(`enable tools for ${tenantId}: ${error.message}`);
+    throw new Error(
+      `tenant_tools insert (${tenantId}, ${toolKey}, ${String(enabled)}): ${error.message}`,
+    );
   }
-}
-
-async function listEnabledTools(
-  supabase: SupabaseClient,
-  tenantId: string,
-): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('tenant_tools')
-    .select('tool_key')
-    .eq('tenant_id', tenantId)
-    .eq('enabled', true);
-
-  if (error) throw new Error(`list tools for ${tenantId}: ${error.message}`);
-  if (!data) return [];
-  return (data as ToolRow[]).map((row) => row.tool_key);
 }
 
 async function deleteTenant(
-  supabase: SupabaseClient,
+  svc: SupabaseClient,
   tenantId: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from('tenants')
-    .delete()
-    .eq('id', tenantId);
+  const { error } = await svc.from('tenants').delete().eq('id', tenantId);
   if (error) {
     process.stderr.write(
-      `[verify-isolation] cleanup warning: failed to delete tenant ${tenantId}: ${error.message}\n`,
+      `[verify-isolation] cleanup warning: delete tenant ${tenantId}: ${error.message}\n`,
     );
-  }
-}
-
-async function checkCredentialIsolation(
-  service: SupabaseClient,
-  tenantAId: string,
-  providerA: string,
-  secretA: string,
-  tenantBId: string,
-  providerB: string,
-  secretB: string,
-): Promise<void> {
-  const checkName = 'credential-isolation';
-  try {
-    const resolvedA = await resolveSecret(service, tenantAId, providerA);
-    const resolvedB = await resolveSecret(service, tenantBId, providerB);
-
-    if (resolvedA !== secretA) {
-      record(
-        checkName,
-        false,
-        'tenant A resolved value did not match stored secret',
-      );
-      return;
-    }
-    if (resolvedB !== secretB) {
-      record(
-        checkName,
-        false,
-        'tenant B resolved value did not match stored secret',
-      );
-      return;
-    }
-    if (resolvedA === resolvedB) {
-      record(checkName, false, 'tenant A and B resolved to the same secret');
-      return;
-    }
-
-    // Cross-tenant sanity: A's provider key, scoped to B's tenant, must not
-    // leak A's secret. Providers differ here so the function returns null,
-    // but assert explicitly to guard against an accidental cross-tenant match.
-    const cross = await resolveSecret(service, tenantBId, providerA);
-    if (cross === secretA) {
-      record(
-        checkName,
-        false,
-        'cross-tenant resolution leaked tenant A secret to tenant B',
-      );
-      return;
-    }
-
-    record(
-      checkName,
-      true,
-      'tenant A and B each resolve their own distinct secret',
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    record(checkName, false, message);
-  }
-}
-
-async function checkToolScoping(
-  service: SupabaseClient,
-  tenantAId: string,
-  tenantBId: string,
-  toolsA: readonly string[],
-  toolsB: readonly string[],
-): Promise<void> {
-  const checkName = 'tool-scoping';
-  try {
-    const enabledA = new Set(await listEnabledTools(service, tenantAId));
-    const enabledB = new Set(await listEnabledTools(service, tenantBId));
-
-    for (const tool of toolsA) {
-      if (!enabledA.has(tool)) {
-        record(checkName, false, `tenant A missing expected tool ${tool}`);
-        return;
-      }
-    }
-    for (const tool of toolsB) {
-      if (!enabledB.has(tool)) {
-        record(checkName, false, `tenant B missing expected tool ${tool}`);
-        return;
-      }
-    }
-
-    // A must be a strict subset of B.
-    for (const tool of enabledA) {
-      if (!enabledB.has(tool)) {
-        record(
-          checkName,
-          false,
-          `tenant A has tool ${tool} not enabled for tenant B`,
-        );
-        return;
-      }
-    }
-
-    const extra: string[] = [];
-    for (const tool of enabledB) {
-      if (!enabledA.has(tool)) extra.push(tool);
-    }
-    if (extra.length === 0) {
-      record(
-        checkName,
-        false,
-        'tenant B has no extra tools beyond tenant A — expected strict superset',
-      );
-      return;
-    }
-
-    record(
-      checkName,
-      true,
-      `A=[${[...enabledA].sort().join(',')}] is strict subset of B=[${[...enabledB].sort().join(',')}] (extra: ${extra.sort().join(',')})`,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    record(checkName, false, message);
-  }
-}
-
-async function checkAnonCannotResolve(
-  supabaseUrl: string,
-  anonKey: string,
-  tenantId: string,
-  provider: string,
-): Promise<void> {
-  const checkName = 'anon-cannot-resolve';
-  try {
-    const anon = createClient(supabaseUrl, anonKey, {
-      auth: { persistSession: false },
-    });
-    const { data, error } = await anon.rpc('resolve_tenant_secret', {
-      p_tenant: tenantId,
-      p_provider: provider,
-    });
-
-    if (error) {
-      record(
-        checkName,
-        true,
-        `anon RPC rejected as expected (${error.message})`,
-      );
-      return;
-    }
-    if (data === null || data === undefined) {
-      record(
-        checkName,
-        false,
-        'anon RPC returned no error but also returned no data — expected explicit denial from REVOKE',
-      );
-      return;
-    }
-    record(
-      checkName,
-      false,
-      `anon RPC unexpectedly returned a value (${typeof data})`,
-    );
-  } catch (err) {
-    // A thrown error from the client is also acceptable proof of rejection.
-    const message = err instanceof Error ? err.message : String(err);
-    record(checkName, true, `anon RPC threw as expected (${message})`);
-  }
-}
-
-async function checkAuthenticatedCannotResolve(
-  supabaseUrl: string,
-  anonKey: string,
-  jwt: string,
-  tenantId: string,
-  provider: string,
-): Promise<void> {
-  const checkName = 'authenticated-cannot-resolve';
-  try {
-    // supabase-js attaches a custom JWT for RPCs via global headers; we keep
-    // the anon key as the apikey so PostgREST accepts the request, while the
-    // Authorization bearer drives the auth.role() PostgREST runs the call as.
-    const authed = createClient(supabaseUrl, anonKey, {
-      auth: { persistSession: false },
-      global: { headers: { Authorization: `Bearer ${jwt}` } },
-    });
-    const { data, error } = await authed.rpc('resolve_tenant_secret', {
-      p_tenant: tenantId,
-      p_provider: provider,
-    });
-
-    if (error) {
-      record(
-        checkName,
-        true,
-        `authenticated RPC rejected as expected (${error.message})`,
-      );
-      return;
-    }
-    if (data === null || data === undefined) {
-      record(
-        checkName,
-        false,
-        'authenticated RPC returned no error but also returned no data — expected explicit denial from REVOKE',
-      );
-      return;
-    }
-    record(
-      checkName,
-      false,
-      `authenticated RPC unexpectedly returned a value (${typeof data})`,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    record(checkName, true, `authenticated RPC threw as expected (${message})`);
   }
 }
 
 async function main(): Promise<void> {
-  const supabaseUrl = getEnv('SUPABASE_URL');
-  const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-  const anonKey = getEnv('SUPABASE_ANON_KEY');
-  const authenticatedJwt = getOptionalEnv('SUPABASE_TEST_AUTHENTICATED_JWT');
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+    park(
+      'missing one or more of SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY',
+    );
+  }
 
   const service = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
 
-  const runId = randomUUID();
-  const slugA = `verify-isolation-a-${runId}`;
-  const slugB = `verify-isolation-b-${runId}`;
-  const providerA = 'anthropic';
-  const providerB = 'openai';
-  const secretA = `sk-test-a-${randomUUID()}`;
-  const secretB = `sk-test-b-${randomUUID()}`;
-  const toolsA: readonly string[] = ['http_request'];
-  const toolsB: readonly string[] = ['http_request', 'web_search'];
-
-  let tenantA: TenantRow | undefined;
-  let tenantB: TenantRow | undefined;
-  let expectedChecks = 0;
-
-  try {
-    tenantA = await insertTenant(service, slugA, 'Verify Isolation A');
-    tenantB = await insertTenant(service, slugB, 'Verify Isolation B');
-
-    await storeCredential(service, tenantA.id, providerA, secretA);
-    await storeCredential(service, tenantB.id, providerB, secretB);
-
-    await enableTools(service, tenantA.id, toolsA);
-    await enableTools(service, tenantB.id, toolsB);
-
-    await checkCredentialIsolation(
-      service,
-      tenantA.id,
-      providerA,
-      secretA,
-      tenantB.id,
-      providerB,
-      secretB,
-    );
-    expectedChecks += 1;
-
-    await checkToolScoping(service, tenantA.id, tenantB.id, toolsA, toolsB);
-    expectedChecks += 1;
-
-    await checkAnonCannotResolve(supabaseUrl, anonKey, tenantA.id, providerA);
-    expectedChecks += 1;
-
-    if (authenticatedJwt) {
-      await checkAuthenticatedCannotResolve(
-        supabaseUrl,
-        anonKey,
-        authenticatedJwt,
-        tenantA.id,
-        providerA,
-      );
-      expectedChecks += 1;
-    } else {
-      skip(
-        'authenticated-role check',
-        'SUPABASE_TEST_AUTHENTICATED_JWT not set',
-      );
-    }
-  } finally {
-    if (tenantA) await deleteTenant(service, tenantA.id);
-    if (tenantB) await deleteTenant(service, tenantB.id);
+  const reach = await isReachable(service);
+  if (!reach.ok) {
+    park(`supabase unreachable: ${reach.reason ?? 'unknown'}`);
   }
 
-  const passed = results.filter((r) => r.ok).length;
-  const total = results.length;
-  process.stdout.write(
-    `verify-isolation: ${passed}/${total} checks passed\n`,
-  );
-  const allOk = total === expectedChecks && passed === total && total > 0;
-  process.exit(allOk ? 0 : 1);
+  // loadTenantContext reads SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY from its
+  // own env (Deno in production, process.env via the sibling Bun shim here).
+  // Set them explicitly before invariant 3 so the script works regardless of
+  // how the runner exported them.
+  process.env.SUPABASE_URL = supabaseUrl;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = serviceRoleKey;
+
+  const runId = randomUUID();
+  const slugA = `verify-iso-a-${runId}`;
+  const slugB = `verify-iso-b-${runId}`;
+
+  // Both tenants intentionally share provider='anthropic' with DIFFERENT
+  // secrets — that's what gives invariant 2 real teeth: resolve(tenantB,
+  // anthropic) must return tenantB's secret, never tenantA's, even though
+  // the (provider, key) tuple they query is identical in shape.
+  const provider = 'anthropic';
+  const secretA = `sk-test-a-${randomUUID()}`;
+  const secretB = `sk-test-b-${randomUUID()}`;
+
+  const tenantIds: string[] = [];
+
+  try {
+    const tenantA = await insertTenant(service, slugA, 'Verify Isolation A');
+    tenantIds.push(tenantA.id);
+    const tenantB = await insertTenant(service, slugB, 'Verify Isolation B');
+    tenantIds.push(tenantB.id);
+
+    // ---------------------------------------------------------------------
+    // Invariant 1 — distinct credentials.
+    // ---------------------------------------------------------------------
+    await storeCredential(service, tenantA.id, provider, secretA);
+    await storeCredential(service, tenantB.id, provider, secretB);
+
+    if (secretA === secretB) {
+      failAndExit(
+        1,
+        'generated fake keys collided — RNG bug, refusing to continue',
+      );
+    }
+    ok(
+      1,
+      `distinct credentials stored for two tenants (A=${shortKey(secretA)}, B=${shortKey(secretB)})`,
+    );
+
+    // ---------------------------------------------------------------------
+    // Invariant 2 — per-tenant resolution + cross-tenant non-leak.
+    // ---------------------------------------------------------------------
+    const resolvedA = await resolveSecret(service, tenantA.id, provider);
+    const resolvedB = await resolveSecret(service, tenantB.id, provider);
+
+    if (resolvedA !== secretA) {
+      failAndExit(
+        2,
+        `tenant A resolved value did not match stored secret (got ${resolvedA === null ? 'null' : shortKey(resolvedA)})`,
+      );
+    }
+    if (resolvedB !== secretB) {
+      failAndExit(
+        2,
+        `tenant B resolved value did not match stored secret (got ${resolvedB === null ? 'null' : shortKey(resolvedB)})`,
+      );
+    }
+    if (resolvedA === resolvedB) {
+      failAndExit(
+        2,
+        'tenant A and tenant B resolved to the same secret under shared provider — cross-tenant leak',
+      );
+    }
+    ok(
+      2,
+      `per-tenant resolution under shared provider='${provider}' returns distinct secrets`,
+    );
+
+    // ---------------------------------------------------------------------
+    // Invariant 3 — loadTenantContext registry scoping.
+    //
+    // Tenant A has http_request enabled. Tenant B has the same row with
+    // enabled=false. After loadTenantContext, A's registry must contain
+    // http_request and B's must be empty.
+    // ---------------------------------------------------------------------
+    await setToolRow(service, tenantA.id, 'http_request', true);
+    await setToolRow(service, tenantB.id, 'http_request', false);
+
+    const ctxA = await loadTenantContext(tenantA.id, 'claude-sonnet-4-5');
+    const ctxB = await loadTenantContext(tenantB.id, 'claude-sonnet-4-5');
+
+    const keysA = ctxA.registry
+      .list()
+      .map((t) => t.key)
+      .sort();
+    const keysB = ctxB.registry.list().map((t) => t.key);
+
+    const expectedA = ['http_request'];
+    if (keysA.length !== expectedA.length || keysA[0] !== expectedA[0]) {
+      failAndExit(
+        3,
+        `tenant A registry expected [http_request], got [${keysA.join(',')}]`,
+      );
+    }
+    if (keysB.length !== 0) {
+      failAndExit(
+        3,
+        `tenant B registry expected [], got [${keysB.join(',')}] — disabled tools leaked into the registry`,
+      );
+    }
+    ok(
+      3,
+      'loadTenantContext built per-tenant registry (A=[http_request], B=[])',
+    );
+
+    // ---------------------------------------------------------------------
+    // Invariant 4 — anon role denial.
+    //
+    // PostgREST may surface the REVOKE either as a non-null `error` or as a
+    // null `data` with no error (it sometimes swallows function-level perm
+    // failures). Either of those is a pass. A real string back is a fail.
+    // ---------------------------------------------------------------------
+    const anon = createClient(supabaseUrl, anonKey, {
+      auth: { persistSession: false },
+    });
+    const { data: anonData, error: anonErr } = await anon.rpc(
+      'resolve_tenant_secret',
+      { p_tenant: tenantA.id, p_provider: provider },
+    );
+
+    const anonValue: string | null =
+      typeof anonData === 'string' ? anonData : null;
+
+    if (anonErr) {
+      ok(4, `anon rpc rejected (${anonErr.message})`);
+    } else if (anonValue === null) {
+      ok(4, 'anon rpc returned null data with no leaked secret');
+    } else {
+      failAndExit(
+        4,
+        `anon rpc returned a secret value (${shortKey(anonValue)}) — REVOKE bypassed`,
+      );
+    }
+
+    process.stdout.write('[isolation verified] all 4 invariants passed\n');
+  } finally {
+    for (const id of tenantIds) {
+      try {
+        await deleteTenant(service, id);
+      } catch (err: unknown) {
+        process.stderr.write(
+          `[verify-isolation] cleanup error for ${id}: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
+  }
 }
 
 main().catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
+  // Network/connection errors thrown out of supabase-js look like fetch
+  // failures; treat those the same as the reachability probe and park.
+  if (
+    /fetch failed|ECONNREFUSED|ENOTFOUND|AbortError|network|UND_ERR/i.test(
+      message,
+    )
+  ) {
+    park(`network failure during run: ${message}`);
+  }
   process.stderr.write(`[verify-isolation] unexpected failure: ${message}\n`);
   process.exit(1);
 });

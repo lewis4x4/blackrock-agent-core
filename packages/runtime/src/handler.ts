@@ -118,7 +118,11 @@ export function createAgentHandler(opts: HandlerOptions = {}) {
       };
       return json(result, 200);
     } catch (e) {
-      return json({ error: String(e) }, 500);
+      // Log the full error server-side; return a generic message to the caller.
+      // Raw errors from loadTenantContext can include tenant ids, provider
+      // names, and Vault/RLS state — never leak that to an unauthenticated POST.
+      console.error("agent-handler error:", e);
+      return json({ error: "internal error" }, 500);
     }
   };
 }

@@ -3,17 +3,41 @@ import { createClient } from "@supabase/supabase-js";
 import { ToolRegistry, builtins } from "@blackrock/agent-tools";
 import type { ModelProvider, RunContext } from "./types";
 
-// Edge runtime global. Mirrors handler.ts — we target Deno (Supabase Edge Functions).
-declare const Deno: { env: { get(name: string): string | undefined } };
-
 const MODEL_PROVIDERS: ReadonlySet<ModelProvider> = new Set<ModelProvider>([
   "anthropic",
   "openai",
 ]);
 
 /**
+ * Read an environment variable from whichever runtime we're in.
+ * Supports Deno (Supabase Edge Functions, the production target) and
+ * Bun/Node (verify-isolation scripts, local tests).
+ */
+function readEnv(name: string): string | undefined {
+  const g = globalThis as {
+    Deno?: { env: { get(n: string): string | undefined } };
+    process?: { env: Record<string, string | undefined> };
+  };
+  return g.Deno?.env.get(name) ?? g.process?.env?.[name];
+}
+
+/**
+ * Map a model string to the provider that serves it. Returns null when the
+ * caller didn't pass a model — the caller is expected to fall back to whatever
+ * single credential the tenant has configured.
+ */
+function providerForModel(model: string): ModelProvider | null {
+  if (!model) return null;
+  if (model.startsWith("claude")) return "anthropic";
+  if (model.startsWith("gpt") || model.startsWith("o1") || model.startsWith("o3"))
+    return "openai";
+  return null;
+}
+
+/**
  * Resolve everything a per-request agent run needs, server-side:
- *   1. Look up the tenant's model provider in `tenant_credentials`.
+ *   1. Pick the tenant's model provider deterministically from the `model` arg
+ *      (or fall back to the tenant's sole configured credential).
  *   2. Decrypt the matching secret via the `resolve_tenant_secret` RPC.
  *   3. Assemble a per-tenant ToolRegistry from `tenant_tools` (only enabled tools).
  *
@@ -25,8 +49,8 @@ export async function loadTenantContext(
   tenantId: string,
   model: string
 ): Promise<RunContext> {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const supabaseUrl = readEnv("SUPABASE_URL");
+  const supabaseServiceKey = readEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !supabaseServiceKey) {
     throw new Error(
       "loadTenantContext: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set"
@@ -37,32 +61,61 @@ export async function loadTenantContext(
     auth: { persistSession: false },
   });
 
-  // 1. Find the model credential row for this tenant.
-  const { data: credRows, error: credErr } = await supabase
-    .from("tenant_credentials")
-    .select("provider")
-    .eq("tenant_id", tenantId)
-    .in("provider", ["anthropic", "openai"]);
+  // 1. Deterministically select the provider for this request.
+  const desired = providerForModel(model);
+  let provider: ModelProvider;
 
-  if (credErr) {
-    throw new Error(
-      `loadTenantContext: failed to read tenant_credentials: ${credErr.message}`
-    );
-  }
-  if (!credRows || credRows.length === 0) {
-    throw new Error(
-      `loadTenantContext: no model credential (anthropic|openai) for tenant ${tenantId}`
-    );
-  }
+  if (desired !== null) {
+    // Caller gave us a model — query for *exactly* that provider.
+    const { data: credRows, error: credErr } = await supabase
+      .from("tenant_credentials")
+      .select("provider")
+      .eq("tenant_id", tenantId)
+      .eq("provider", desired)
+      .limit(1);
 
-  // `provider` column is typed as `unknown` coming back from the generic client; narrow it.
-  const rawProvider = (credRows[0] as { provider: string }).provider;
-  if (!MODEL_PROVIDERS.has(rawProvider as ModelProvider)) {
-    throw new Error(
-      `loadTenantContext: unexpected provider '${rawProvider}' for tenant ${tenantId}`
-    );
+    if (credErr) {
+      throw new Error(
+        `loadTenantContext: failed to read tenant_credentials: ${credErr.message}`
+      );
+    }
+    if (!credRows || credRows.length === 0) {
+      throw new Error(
+        `loadTenantContext: tenant ${tenantId} has no '${desired}' credential for model '${model}'`
+      );
+    }
+    provider = desired;
+  } else {
+    // No model specified — only safe if the tenant has exactly one model credential.
+    const { data: credRows, error: credErr } = await supabase
+      .from("tenant_credentials")
+      .select("provider")
+      .eq("tenant_id", tenantId)
+      .in("provider", ["anthropic", "openai"]);
+
+    if (credErr) {
+      throw new Error(
+        `loadTenantContext: failed to read tenant_credentials: ${credErr.message}`
+      );
+    }
+    if (!credRows || credRows.length === 0) {
+      throw new Error(
+        `loadTenantContext: no model credential (anthropic|openai) for tenant ${tenantId}`
+      );
+    }
+    if (credRows.length > 1) {
+      throw new Error(
+        `loadTenantContext: model not specified and tenant ${tenantId} has multiple model credentials; specify a model string`
+      );
+    }
+    const rawProvider = (credRows[0] as { provider: string }).provider;
+    if (!MODEL_PROVIDERS.has(rawProvider as ModelProvider)) {
+      throw new Error(
+        `loadTenantContext: unexpected provider '${rawProvider}' for tenant ${tenantId}`
+      );
+    }
+    provider = rawProvider as ModelProvider;
   }
-  const provider = rawProvider as ModelProvider;
 
   // 2. Decrypt the secret via RPC.
   const { data: secretData, error: secretErr } = await supabase.rpc(
@@ -103,8 +156,7 @@ export async function loadTenantContext(
     if (enabledKeys.has(tool.key)) registry.register(tool);
   }
 
-  const finalModel =
-    model || Deno.env.get("AGENT_MODEL") || "claude-sonnet-4-5";
+  const finalModel = model || readEnv("AGENT_MODEL") || "claude-sonnet-4-5";
 
   return {
     tenantId,

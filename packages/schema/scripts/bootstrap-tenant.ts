@@ -119,17 +119,21 @@ async function storeCredential(
   if (error) fail(`failed to store credential in vault: ${error.message}`);
 }
 
-async function enableTool(
+async function enableTools(
   supabase: SupabaseClient,
   tenantId: string,
-  toolKey: string,
+  toolKeys: readonly string[],
 ): Promise<void> {
-  const { error } = await supabase
-    .from('tenant_tools')
-    .insert({ tenant_id: tenantId, tool_key: toolKey, enabled: true });
+  const rows = toolKeys.map((tool_key) => ({
+    tenant_id: tenantId,
+    tool_key,
+    enabled: true,
+  }));
+
+  const { error } = await supabase.from('tenant_tools').insert(rows);
 
   if (error) {
-    fail(`failed to enable tool "${toolKey}": ${error.message}`);
+    fail(`failed to enable tools: ${error.message}`);
   }
 }
 
@@ -151,9 +155,10 @@ async function main(): Promise<void> {
   const tenant = await insertTenant(supabase, args.slug, args.displayName);
   await storeCredential(supabase, tenant.id, args.provider, args.apiKey);
 
-  for (const tool of args.tools) {
-    await enableTool(supabase, tenant.id, tool);
-  }
+  // Tools land in a single batch insert so a failure leaves no partial tool set.
+  // If this batch fails after credential storage, the operator must manually
+  // `delete from tenants where id = '<id>'` (cascades to credentials and tools).
+  await enableTools(supabase, tenant.id, args.tools);
 
   process.stdout.write(
     `[bootstrap] tenant ${tenant.slug} created with id ${tenant.id}, ` +
