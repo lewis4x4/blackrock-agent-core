@@ -1,0 +1,22 @@
+{
+  "name": "@blackrock/agent-runtime",
+  "version": "0.1.0",
+  "description": "Agent Core orchestrator — planner, executor, synthesizer, critic. Deploys into the client's own Supabase Edge Functions.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@blackrock/agent-tools": "workspace:*"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@blackrock/agent-schema",
+  "version": "0.1.0",
+  "description": "Agent Core database migrations — applied into each client's own Supabase project.",
+  "files": ["migrations"],
+  "scripts": {
+    "build": "echo 'schema: no build step'",
+    "typecheck": "echo 'schema: no typecheck'"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}
