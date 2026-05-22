@@ -1,5 +1,6 @@
 export { createAgentHandler } from "./handler";
 export type { HandlerOptions } from "./handler";
+export { loadTenantContext } from "./context";
 export { plan } from "./planner";
 export { execute } from "./executor";
 export { synthesize } from "./synthesizer";

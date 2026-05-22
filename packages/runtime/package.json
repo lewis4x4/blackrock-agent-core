@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blackrock/agent-tools": "workspace:*"
+    "@blackrock/agent-tools": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

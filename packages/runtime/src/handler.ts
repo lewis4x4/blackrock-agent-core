@@ -3,6 +3,7 @@ import { plan } from "./planner";
 import { execute } from "./executor";
 import { synthesize } from "./synthesizer";
 import { critique } from "./critic";
+import { loadTenantContext } from "./context";
 import type { AgentResult, RunContext } from "./types";
 
 // Edge runtime global. The runtime targets Deno (Supabase Edge Functions).
@@ -32,9 +33,10 @@ function defaultRegistry(): ToolRegistry {
   return r;
 }
 
-// SPRINT 1: production resolves per-tenant keys from Supabase Vault. This
-// default reads from the Edge Function's own env so the scaffold runs today.
-async function defaultLoadContext(
+// SPRINT 1 dev-only fallback. Gated behind AGENT_ENV=dev. Reads keys straight
+// from the Edge Function's env so the scaffold runs without a Vault round-trip.
+// Production takes the Vault path in `loadTenantContext` (see ./context.ts).
+async function devEnvLoadContext(
   tenantId: string,
   model: string
 ): Promise<Omit<RunContext, "registry">> {
@@ -55,16 +57,24 @@ async function defaultLoadContext(
 /**
  * Builds the agent HTTP handler. Drop this straight into a Supabase Edge
  * Function:  Deno.serve(createAgentHandler());
+ *
+ * Context resolution order, per request:
+ *   1. Caller-supplied `opts.loadTenantContext` (merged with `opts.registry`).
+ *   2. AGENT_ENV=dev: env-var fallback (merged with `opts.registry`).
+ *   3. Default (production): `loadTenantContext` from ./context — Vault-backed
+ *      keys AND a per-tenant ToolRegistry. The default `opts.registry` is
+ *      discarded in this path so tenants only see tools they've enabled.
  */
 export function createAgentHandler(opts: HandlerOptions = {}) {
+  const customLoad = opts.loadTenantContext;
   const registry = opts.registry ?? defaultRegistry();
-  const loadCtx = opts.loadTenantContext ?? defaultLoadContext;
 
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
     try {
+      // Edge handler reads arbitrary JSON; cast is unavoidable at the boundary.
       const body: any = await req.json();
       const tenantId = body?.tenantId;
       const message = body?.message;
@@ -73,8 +83,17 @@ export function createAgentHandler(opts: HandlerOptions = {}) {
         return json({ error: "tenantId and message are required" }, 400);
       }
 
-      const base = await loadCtx(tenantId, model);
-      const ctx: RunContext = { ...base, registry };
+      let ctx: RunContext;
+      if (customLoad) {
+        const base = await customLoad(tenantId, model);
+        ctx = { ...base, registry };
+      } else if (Deno.env.get("AGENT_ENV") === "dev") {
+        const base = await devEnvLoadContext(tenantId, model);
+        ctx = { ...base, registry };
+      } else {
+        // Production: Vault-backed keys + per-tenant registry from ./context.
+        ctx = await loadTenantContext(tenantId, model);
+      }
 
       const graph = await plan(ctx, message);
       const results = await execute(ctx, graph);
