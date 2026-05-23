@@ -29,32 +29,56 @@ interface DataQueryOutput {
   count: number;
 }
 
-/**
- * Allowlist of tables this tool may query. Anything else is rejected before a
- * round-trip to the database. v1 ships the tenant-scoped audit tables; future
- * iterations can drive this from `tenant_tools.config` per tenant.
- *
- * Every table here MUST have a `tenant_id` column — `data_query` injects an
- * equality filter on `ctx.tenantId` for every request, so RLS isn't the only
- * line of defense.
- */
-const ALLOWED_TABLES: ReadonlySet<string> = new Set([
-  "agent_runs",
-  "agent_messages",
-]);
+// SECURITY: this tool uses the service-role key, which bypasses RLS. The
+// only tenant boundary enforced here is the `tenant_id = ctx.tenantId`
+// filter injected below. Every table in TABLE_COLUMNS must have a
+// NOT NULL `tenant_id` column.
+//
+// Per-table column allowlist. Anything not in the set is rejected before a
+// round-trip to the database, for BOTH `columns` and `filters`. Sensitive
+// jsonb columns like `agent_messages.content` and `agent_runs.task_graph`
+// are deliberately excluded — raw user/assistant content excluded by default;
+// access requires a separate, audited tool.
+const TABLE_COLUMNS: Record<string, ReadonlySet<string>> = {
+  agent_runs: new Set([
+    "id", "tenant_id", "user_id", "status",
+    "model_provider", "tokens_in", "tokens_out",
+    "cost_estimate", "created_at",
+  ]),
+  agent_messages: new Set([
+    "id", "run_id", "tenant_id", "role", "created_at",
+  ]),
+};
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 200;
+const QUERY_TIMEOUT_MS = 30_000;
 
 // Column identifier guard. Strict enough that we can safely interpolate into
 // PostgREST .select() and .eq() calls without enabling SQL injection.
 const IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+let cachedClient: ReturnType<typeof createClient> | null = null;
+function getSupabase() {
+  if (cachedClient) return cachedClient;
+  const supabaseUrl = readEnv("SUPABASE_URL");
+  const supabaseServiceKey = readEnv("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error(
+      "data_query: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set"
+    );
+  }
+  cachedClient = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false },
+  });
+  return cachedClient;
+}
+
 /**
  * Built-in: read-only, tenant-scoped data query against the project's Supabase
  * database. The tool never accepts arbitrary SQL — only (table, filters, columns,
- * limit) tuples, where `table` must be in `ALLOWED_TABLES` and every column
- * identifier passes the IDENT guard.
+ * limit) tuples, where `table` must be in `TABLE_COLUMNS` and every column
+ * identifier passes the IDENT guard AND is in the per-table allowlist.
  *
  * `tenant_id = ctx.tenantId` is enforced server-side on every call.
  */
@@ -66,7 +90,8 @@ export const dataQuery: Tool = {
     const input = rawInput as unknown as DataQueryInput;
     const table = String(input?.table ?? "");
     if (!table) throw new Error("data_query requires a table name");
-    if (!ALLOWED_TABLES.has(table)) {
+    const allowedColumns = TABLE_COLUMNS[table];
+    if (!allowedColumns) {
       throw new Error(
         `data_query: table '${table}' is not in the allowlist`
       );
@@ -83,29 +108,29 @@ export const dataQuery: Tool = {
         if (typeof c !== "string" || !IDENT.test(c)) {
           throw new Error(`data_query: invalid column identifier '${c}'`);
         }
+        if (!allowedColumns.has(c)) {
+          throw new Error(
+            `data_query: column '${c}' is not allowed on table '${table}'`
+          );
+        }
       }
     }
-    const selectExpr = columns && columns.length > 0 ? columns.join(",") : "*";
+    const selectExpr =
+      columns && columns.length > 0
+        ? columns.join(",")
+        : [...allowedColumns].join(",");
 
     const tenantId = String(ctx?.tenantId ?? "");
     if (!tenantId) {
       throw new Error("data_query: ctx.tenantId is required");
     }
 
-    const supabaseUrl = readEnv("SUPABASE_URL");
-    const supabaseServiceKey = readEnv("SUPABASE_SERVICE_ROLE_KEY");
-    if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error(
-        "data_query: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set"
-      );
-    }
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { persistSession: false },
-    });
+    const supabase = getSupabase();
 
     let query = supabase
       .from(table)
       .select(selectExpr)
+      .abortSignal(AbortSignal.timeout(QUERY_TIMEOUT_MS))
       .eq("tenant_id", tenantId)
       .limit(limit);
 
@@ -115,8 +140,14 @@ export const dataQuery: Tool = {
         throw new Error(`data_query: invalid filter column '${key}'`);
       }
       if (key === "tenant_id") {
-        // Don't let the caller widen the tenant scope.
-        continue;
+        throw new Error(
+          "data_query: caller may not specify a 'tenant_id' filter; it is injected from ctx"
+        );
+      }
+      if (!allowedColumns.has(key)) {
+        throw new Error(
+          `data_query: filter '${key}' is not allowed on table '${table}'`
+        );
       }
       if (
         typeof value !== "string" &&
@@ -142,5 +173,3 @@ export const dataQuery: Tool = {
     return output;
   },
 };
-
-// [PART 3 COMPLETE]

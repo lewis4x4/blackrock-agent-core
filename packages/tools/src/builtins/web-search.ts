@@ -65,12 +65,22 @@ export const webSearch: Tool = {
     url.searchParams.set("q", query);
     url.searchParams.set("count", String(count));
 
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        "x-subscription-token": apiKey,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          "x-subscription-token": apiKey,
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      const name = (err as { name?: unknown })?.name;
+      if (name === "TimeoutError" || name === "AbortError") {
+        throw new Error("web_search: request timed out");
+      }
+      throw err;
+    }
 
     if (!res.ok) {
       const body = await res.text();
@@ -99,5 +109,3 @@ export const webSearch: Tool = {
     return output;
   },
 };
-
-// [PART 1 COMPLETE]

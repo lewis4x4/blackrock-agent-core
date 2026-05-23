@@ -17,5 +17,3 @@ export { dataQuery } from "./builtins/data-query";
  * `tenant_tools` table — registering a tool here does NOT grant access.
  */
 export const builtins = [httpRequest, webSearch, docGenerate, dataQuery];
-
-// [PART 4 COMPLETE]

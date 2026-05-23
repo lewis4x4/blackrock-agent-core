@@ -14,8 +14,8 @@ interface DocGenerateOutput {
   missingVariables: string[];
 }
 
-// {{ name }} — alphanumeric / underscore / dot, optional whitespace either side.
-const PLACEHOLDER = /\{\{\s*([a-zA-Z_][\w.]*)\s*\}\}/g;
+// {{ name }} — alphanumeric / underscore, optional whitespace either side.
+const PLACEHOLDER = /\{\{\s*([a-zA-Z_]\w*)\s*\}\}/g;
 
 const MAX_TEMPLATE_BYTES = 200_000;
 
@@ -66,5 +66,3 @@ export const docGenerate: Tool = {
     return output;
   },
 };
-
-// [PART 2 COMPLETE]

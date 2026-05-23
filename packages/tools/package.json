@@ -11,10 +11,14 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
