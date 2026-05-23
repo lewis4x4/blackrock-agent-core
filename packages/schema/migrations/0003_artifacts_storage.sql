@@ -55,9 +55,14 @@ declare
   v_row_id uuid;
 begin
   -- Validate the storage_path starts with the tenant_id so a hostile caller
-  -- can't register a pointer to another tenant's blob.
-  if p_storage_path !~ ('^' || p_tenant::text || '/') then
-    raise exception 'storage_path must begin with tenant_id/ (got %)', p_storage_path;
+  -- can't register a pointer to another tenant's blob. Also reject any
+  -- `..` segment so a path-traversal value like `<tenant_id>/../other/x`
+  -- can't sneak past the prefix check.
+  if p_storage_path !~ ('^' || p_tenant::text || '/[^/]') then
+    raise exception 'storage_path must begin with tenant_id/<segment> (got %)', p_storage_path;
+  end if;
+  if p_storage_path ~ '(^|/)\.\.(/|$)' then
+    raise exception 'storage_path may not contain a .. segment (got %)', p_storage_path;
   end if;
 
   insert into artifacts

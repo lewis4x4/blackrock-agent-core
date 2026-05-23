@@ -118,8 +118,15 @@ begin
   -- via the format(%L) call inside the WHERE clause assembly. The dynamic
   -- piece is safe because no caller-controlled string ever reaches the SQL
   -- without identifier or literal quoting.
+  --
+  -- We project ONLY the v_select_columns inside an inner SELECT so the
+  -- returned jsonb genuinely narrows to the requested column set (rather
+  -- than `to_jsonb(t)` returning every column of the row). The TS layer
+  -- already validates the column list; this is the matching SQL-layer
+  -- enforcement.
   v_sql := format(
-    'select to_jsonb(t) from %I t where tenant_id = %L %s order by created_at desc limit %s',
+    'select to_jsonb(r) from (select %s from %I where tenant_id = %L %s order by created_at desc limit %s) r',
+    v_select_expr,
     p_table,
     p_tenant::text,
     v_where,
