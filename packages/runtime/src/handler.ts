@@ -120,10 +120,13 @@ export function createAgentHandler(opts: HandlerOptions = {}) {
 
     const runId = randomRunId();
     const encoder = new TextEncoder();
+    // Hoisted so the `cancel` callback can flip it on client disconnect —
+    // otherwise pending emit() calls would try to enqueue into a cancelled
+    // controller until the orchestrator returns naturally.
+    let closed = false;
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
-        let closed = false;
         const emit = (event: AgentEvent) => {
           if (closed) return;
           controller.enqueue(encoder.encode(formatSse(event)));
@@ -192,8 +195,10 @@ export function createAgentHandler(opts: HandlerOptions = {}) {
         }
       },
       cancel() {
-        // Client disconnected — nothing to clean up here yet; the orchestrator
-        // returns naturally because emit() short-circuits once `closed`.
+        // Client disconnected. Flip `closed` so the orchestrator's pending
+        // emit() calls become no-ops until the pipeline returns naturally —
+        // we can't synchronously abort the in-flight LLM/tool calls from here.
+        closed = true;
       },
     });
 
