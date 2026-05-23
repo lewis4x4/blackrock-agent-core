@@ -14,3 +14,10 @@ export type {
   AgentResult,
   ModelProvider,
 } from "./types";
+export { formatSse, parseSseFrame, parseSseChunk } from "./events";
+export type {
+  AgentEvent,
+  AgentEventType,
+  ToolStartEvent,
+  ToolEndEvent,
+} from "./events";
