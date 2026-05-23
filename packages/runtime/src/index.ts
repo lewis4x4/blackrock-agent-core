@@ -21,3 +21,18 @@ export type {
   ToolStartEvent,
   ToolEndEvent,
 } from "./events";
+export {
+  OAUTH_PROVIDERS,
+  buildAuthorizeUrl,
+  exchangeCode,
+  generatePkcePair,
+  generateState,
+  getProviderConfig,
+  refreshAccessToken,
+} from "./oauth";
+export type {
+  OauthProviderId,
+  OauthProviderConfig,
+  PkcePair,
+  TokenResponse,
+} from "./oauth";

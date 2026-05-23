@@ -68,6 +68,12 @@ export const m365Mail: Tool = {
     const tenantId = String(ctx?.tenantId ?? "");
     if (!tenantId) throw new Error("m365_mail: ctx.tenantId is required");
 
+    // Validate action-specific inputs BEFORE resolving the connection so we
+    // never round-trip to Supabase for a request we'd reject anyway.
+    if (action === "send") {
+      validateSendInput(input as M365MailInputSend);
+    }
+
     const accessToken = await getConnectionAccessToken(tenantId, "m365");
 
     if (action === "list") {
@@ -76,6 +82,18 @@ export const m365Mail: Tool = {
     return sendMessage(input as M365MailInputSend, accessToken);
   },
 };
+
+function validateSendInput(input: M365MailInputSend): void {
+  const to = String(input.to ?? "").trim();
+  const subject = String(input.subject ?? "");
+  const body = String(input.body ?? "");
+  if (!EMAIL.test(to)) throw new Error("m365_mail: invalid 'to' address");
+  if (!subject) throw new Error("m365_mail: subject is required");
+  if (!body) throw new Error("m365_mail: body is required");
+  if (body.length > MAX_BODY_CHARS) {
+    throw new Error(`m365_mail: body exceeds ${MAX_BODY_CHARS} chars`);
+  }
+}
 
 async function listMessages(
   input: M365MailInputList,
@@ -122,17 +140,12 @@ async function sendMessage(
   input: M365MailInputSend,
   accessToken: string
 ): Promise<M365MailSendOutput> {
-  const to = String(input.to ?? "").trim();
-  const subject = String(input.subject ?? "");
-  const body = String(input.body ?? "");
+  // validateSendInput already ran in the tool entry — refetch the normalized
+  // fields here to keep this helper self-contained.
+  const to = String(input.to).trim();
+  const subject = String(input.subject);
+  const body = String(input.body);
   const bodyType = input.bodyType === "HTML" ? "HTML" : "Text";
-
-  if (!EMAIL.test(to)) throw new Error("m365_mail: invalid 'to' address");
-  if (!subject) throw new Error("m365_mail: subject is required");
-  if (!body) throw new Error("m365_mail: body is required");
-  if (body.length > MAX_BODY_CHARS) {
-    throw new Error(`m365_mail: body exceeds ${MAX_BODY_CHARS} chars`);
-  }
 
   const payload = {
     message: {
