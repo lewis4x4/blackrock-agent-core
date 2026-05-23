@@ -16,6 +16,9 @@
         "@blackrock/agent-tools": "workspace:*",
         "@supabase/supabase-js": "^2.45.0",
       },
+      "devDependencies": {
+        "@types/bun": "^1.1.0",
+      },
     },
     "packages/schema": {
       "name": "@blackrock/agent-schema",
@@ -36,6 +39,7 @@
         "lucide-react": "^0.383.0",
       },
       "devDependencies": {
+        "@types/bun": "^1.1.0",
         "@types/react": "^18.3.3",
         "@types/react-dom": "^18.3.0",
       },
