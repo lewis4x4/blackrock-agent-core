@@ -1,6 +1,6 @@
 {
   "name": "@blackrock-ai/agent-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The Agent Core workspace shell — embeddable AI command-center UI.",
   "type": "module",
   "main": "./dist/index.cjs",

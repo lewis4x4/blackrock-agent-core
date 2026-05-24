@@ -1,6 +1,6 @@
 {
   "name": "@blackrock-ai/agent-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent Core orchestrator — planner, executor, synthesizer, critic. Deploys into the client's own Supabase Edge Functions.",
   "type": "module",
   "main": "./dist/index.js",

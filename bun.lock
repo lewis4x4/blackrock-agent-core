@@ -11,7 +11,7 @@
     },
     "packages/runtime": {
       "name": "@blackrock-ai/agent-runtime",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@blackrock-ai/agent-tools": "workspace:*",
         "@supabase/supabase-js": "^2.45.0",
@@ -22,7 +22,7 @@
     },
     "packages/schema": {
       "name": "@blackrock-ai/agent-schema",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "@blackrock-ai/agent-core": "workspace:*",
         "@blackrock-ai/agent-runtime": "workspace:*",
@@ -33,7 +33,7 @@
     },
     "packages/shell": {
       "name": "@blackrock-ai/agent-core",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@blackrock-ai/agent-runtime": "workspace:*",
         "lucide-react": "^0.383.0",
@@ -50,7 +50,7 @@
     },
     "packages/tools": {
       "name": "@blackrock-ai/agent-tools",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@supabase/supabase-js": "^2.45.0",
       },

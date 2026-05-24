@@ -119,7 +119,21 @@ describe("planRenames", () => {
   });
 
   test("sequential with gapped live state starts at max+1", () => {
+    // Live versions ["1","2","5","7"] are all 1-digit, so the new ones inherit
+    // 1-digit width to sort correctly alongside them. (Width is adaptive — it
+    // matches the maximum live version width, falling back to 4 only when no
+    // numeric live versions exist.)
     const plan = planRenames(sourceFiles, ["1", "2", "5", "7"], "sequential");
-    expect(plan[0]?.to).toBe("0008_agent_core.sql");
+    expect(plan[0]?.to).toBe("8_agent_core.sql");
+  });
+
+  test("sequential matches live width: 3-digit live → 3-digit new", () => {
+    // Real-world case (Command Center): live has 001..037 — new must be 038,
+    // 039, ... (3-digit), NOT 0038, 0039, ... (4-digit) which would interleave
+    // wrong against existing 003, 004, ... files.
+    const live = Array.from({ length: 37 }, (_, i) => String(i + 1).padStart(3, "0"));
+    const plan = planRenames(sourceFiles, live, "sequential");
+    expect(plan[0]?.to).toBe("038_agent_core.sql");
+    expect(plan[5]?.to).toBe("043_oauth_connections.sql");
   });
 });

@@ -81,8 +81,27 @@ if [[ "$DRY_RUN" == "true" ]]; then
   echo "Would run remote query: select 1 from pg_extension where extname='supabase_vault';"
   step_would
 else
-  vault_query_output="$(supabase db remote query --project-ref "$SUPABASE_PROJECT_REF" "select 1 from pg_extension where extname='supabase_vault';" 2>&1)" || fail "Unable to query remote database for extension checks."
-  echo "$vault_query_output" | grep -Eq '(^|[^0-9])1([^0-9]|$)' || fail "supabase_vault extension is required — enable it in the Supabase dashboard under Database > Extensions before installing."
+  # 2.98.x: `db query --linked` (JSON via Management API). Parse rows array
+  # via python — passing text by env var to avoid heredoc escaping hazards.
+  vault_query_output="$(supabase db query "select 1 as ok from pg_extension where extname='supabase_vault';" --linked --workdir "$TARGET_REPO" 2>&1 || true)"
+  vault_count=$(SUPA_OUT="$vault_query_output" python3 -c "$(cat <<'PY'
+import json, os, re
+text = os.environ.get('SUPA_OUT', '')
+try:
+    m = re.search(r'\{.*\}', text, re.S)
+    obj = json.loads(m.group(0)) if m else {}
+    print(len(obj.get('rows', [])))
+except Exception:
+    print(0)
+PY
+)")
+  if [[ "$vault_count" == "0" ]]; then
+    # Legacy CLI fallback
+    vault_query_output="$(supabase db remote query --project-ref "$SUPABASE_PROJECT_REF" "select 1 from pg_extension where extname='supabase_vault';" 2>&1 || true)"
+    if ! echo "$vault_query_output" | grep -Eq '(^|\s)1(\s|$)'; then
+      fail "supabase_vault extension is required — enable it in the Supabase dashboard under Database > Extensions before installing. (CLI output: ${vault_query_output:0:200})"
+    fi
+  fi
   step_ok
 fi
 
@@ -111,8 +130,30 @@ if [[ "$DRY_RUN" == "true" ]]; then
   echo "Would validate existing install manifest for same tenantSlug + supabaseProjectRef"
   step_would
 else
-  schema_check_output="$(supabase db remote query --project-ref "$SUPABASE_PROJECT_REF" "select 1 from information_schema.schemata where schema_name='agent_core';" 2>&1)" || fail "Unable to query remote database for schema checks."
-  if echo "$schema_check_output" | grep -Eq '(^|[^0-9])1([^0-9]|$)'; then
+  # 2.98.x: `db query --linked` (JSON via Management API). Parse rows array
+  # via python — passing text by env var to avoid heredoc escaping hazards.
+  schema_check_output="$(supabase db query "select 1 as exists_flag from information_schema.schemata where schema_name='agent_core';" --linked --workdir "$TARGET_REPO" 2>&1 || true)"
+  schema_count=$(SUPA_OUT="$schema_check_output" python3 -c "$(cat <<'PY'
+import json, os, re
+text = os.environ.get('SUPA_OUT', '')
+try:
+    m = re.search(r'\{.*\}', text, re.S)
+    obj = json.loads(m.group(0)) if m else {}
+    print(len(obj.get('rows', [])))
+except Exception:
+    print(-1)
+PY
+)")
+  if [[ "$schema_count" == "-1" ]]; then
+    # Legacy CLI fallback
+    schema_check_output="$(supabase db remote query --project-ref "$SUPABASE_PROJECT_REF" "select 1 from information_schema.schemata where schema_name='agent_core';" 2>&1 || true)"
+    if echo "$schema_check_output" | grep -Eq '(^|\s)1(\s|$)'; then
+      schema_count=1
+    else
+      schema_count=0
+    fi
+  fi
+  if [[ "$schema_count" -ge 1 ]]; then
     manifest_path="$TARGET_REPO/.agent-core-install/install-manifest.json"
     if [[ -f "$manifest_path" ]]; then
       manifest_tenant="$(python3 - "$manifest_path" <<'PY'

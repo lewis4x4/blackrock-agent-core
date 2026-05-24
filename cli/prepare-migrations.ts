@@ -38,14 +38,25 @@ export function planRenames(
     });
 
   if (style === "sequential") {
-    const liveMax = liveVersions
-      .map((value) => Number.parseInt(value, 10))
+    const numericLive = liveVersions
+      .map((v) => v.trim())
+      .filter((v) => /^\d+$/.test(v));
+    const liveMax = numericLive
+      .map((v) => Number.parseInt(v, 10))
       .filter((value) => Number.isFinite(value))
       .reduce((max, value) => Math.max(max, value), 0);
 
+    // Match the digit-width used by existing live migrations so the new ones
+    // sort correctly alongside them. E.g., if live is "037" (3 digits) the new
+    // ones must be "038" (3 digits), not "0038" — sequence files sort lexically
+    // in Supabase's migration runner, and a 4-digit prefix interleaves wrong
+    // with 3-digit prefixes. Falls back to 4 digits when there's no live state.
+    const widths = numericLive.map((v) => v.length);
+    const width = widths.length > 0 ? Math.max(...widths) : 4;
+
     return orderedSources.map((from, idx) => {
       const suffix = from.replace(PREFIX_REGEX, "");
-      const next = String(liveMax + idx + 1).padStart(4, "0");
+      const next = String(liveMax + idx + 1).padStart(width, "0");
       return { from, to: `${next}_${suffix}` };
     });
   }
@@ -267,28 +278,119 @@ function runSupabaseQuery(args: string[]): { ok: boolean; output: string; error:
   };
 }
 
+// The supabase CLI output format depends on version + flags:
+// - 2.98.x linked project: `supabase db query <sql>` returns JSON with `rows`.
+// - older/`db remote query`: returns a psql-style table.
+// We try JSON parse first (cleanest); fall back to the table parser.
+function parseVersionsFromAnyFormat(output: string): string[] {
+  // Try to find a JSON object that contains a `rows` array.
+  const trimmed = output.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const json = JSON.parse(trimmed);
+      const rows = Array.isArray(json) ? json : json?.rows;
+      if (Array.isArray(rows)) {
+        return rows
+          .map((r: unknown) => {
+            if (typeof r === "object" && r !== null && "version" in r) {
+              const v = (r as { version: unknown }).version;
+              return typeof v === "string" ? v : String(v ?? "");
+            }
+            return "";
+          })
+          .filter((v) => v.length > 0);
+      }
+    } catch {
+      // Fall through to table parser.
+    }
+  }
+  return parseVersionsFromOutput(output);
+}
+
+// Parse `supabase migration list` output. Format (table, ASCII pipes):
+//
+//   LOCAL  | REMOTE | TIME (UTC)
+//   -------|--------|------------
+//   022    | 022    | 022 ...
+//   023    | 023    | 023 ...
+//   037    | 037    | 037 ...
+//
+// We extract the REMOTE column (column index 1). Header line + separator are
+// skipped. Local-only rows have empty REMOTE; remote-only rows have empty LOCAL.
+function parseMigrationListRemoteVersions(output: string): string[] {
+  const versions: string[] = [];
+  const lines = output.split(/\r?\n/);
+
+  let headerSeen = false;
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    // Skip header line.
+    if (/^LOCAL\s*[|│]/i.test(trimmed)) {
+      headerSeen = true;
+      continue;
+    }
+    if (!headerSeen) continue;
+    // Skip ASCII rule and CLI footer/warning lines.
+    if (/^[-+|\s]*$/.test(trimmed)) continue;
+    if (/^A new version of Supabase CLI/i.test(trimmed)) continue;
+    if (/^We recommend updating/i.test(trimmed)) continue;
+    // Split on | (ASCII pipe).
+    const cols = raw.split(/[|│]/).map((c) => c.trim());
+    if (cols.length < 2) continue;
+    const remote = cols[1] ?? "";
+    if (remote.length === 0) continue;
+    // First token in the remote column (in case there is trailing junk).
+    const token = remote.split(/\s+/)[0] ?? "";
+    if (token.length === 0) continue;
+    versions.push(token);
+  }
+  return versions;
+}
+
 async function fetchLiveVersions(): Promise<string[]> {
   const projectRef = process.env.SUPABASE_PROJECT_REF;
   if (!projectRef) {
     throw new Error("SUPABASE_PROJECT_REF is required");
   }
+  const targetRepo = process.env.TARGET_REPO;
 
-  const query = "select version from supabase_migrations.schema_migrations order by version;";
-  const attempts: string[][] = [
-    ["db", "remote", "query", query, "--project-ref", projectRef],
-    ["db", "query", query, "--project-ref", projectRef],
-    ["db", "query", query],
-  ];
+  // Strategy: `supabase migration list` queries the REMOTE linked project.
+  // `supabase db query` defaults to LOCAL on 2.98.x — wrong source of truth.
+  const migrationListAttempts: string[][] = [];
+  if (targetRepo) {
+    migrationListAttempts.push(["migration", "list", "--workdir", targetRepo, "--linked"]);
+    migrationListAttempts.push(["migration", "list", "--workdir", targetRepo]);
+  }
+  migrationListAttempts.push(["migration", "list", "--linked"]);
+  migrationListAttempts.push(["migration", "list"]);
 
   const errors: string[] = [];
-  for (const args of attempts) {
+  for (const args of migrationListAttempts) {
     const result = runSupabaseQuery(args);
     if (!result.ok) {
       errors.push(`${args.join(" ")}: ${result.error.trim() || result.output.trim()}`);
       continue;
     }
+    return parseMigrationListRemoteVersions(result.output);
+  }
 
-    return parseVersionsFromOutput(result.output);
+  // Last-resort: db query forms (older CLIs). These hit the remote when the
+  // CLI version routes them that way. We try with --workdir first.
+  const query = "select version from supabase_migrations.schema_migrations order by version;";
+  const dbQueryAttempts: string[][] = [];
+  if (targetRepo) {
+    dbQueryAttempts.push(["db", "remote", "query", query, "--workdir", targetRepo]);
+  }
+  dbQueryAttempts.push(["db", "remote", "query", query, "--project-ref", projectRef]);
+
+  for (const args of dbQueryAttempts) {
+    const result = runSupabaseQuery(args);
+    if (!result.ok) {
+      errors.push(`${args.join(" ")}: ${result.error.trim() || result.output.trim()}`);
+      continue;
+    }
+    return parseVersionsFromAnyFormat(result.output);
   }
 
   throw new Error(`Failed to fetch live migration state via Supabase CLI. ${errors.join(" | ")}`);
