@@ -1,6 +1,6 @@
 {
   "name": "@blackrock-ai/agent-schema",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Agent Core database migrations — applied into each client's own Supabase project.",
   "files": ["migrations"],
   "scripts": {
