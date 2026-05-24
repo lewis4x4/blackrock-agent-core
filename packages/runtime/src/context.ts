@@ -1,7 +1,8 @@
 // SPRINT 1: server-only. Never import into UI/browser code — pulls service-role keys.
 import { createClient } from "@supabase/supabase-js";
-import { ToolRegistry, builtins } from "@blackrock/agent-tools";
+import { ToolRegistry, builtins } from "@blackrock-ai/agent-tools";
 import type { ModelProvider, RunContext } from "./types";
+import { AGENT_CORE_SCHEMA } from "./constants";
 
 const MODEL_PROVIDERS: ReadonlySet<ModelProvider> = new Set<ModelProvider>([
   "anthropic",
@@ -59,6 +60,7 @@ export async function loadTenantContext(
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
 
   // 1. Deterministically select the provider for this request.

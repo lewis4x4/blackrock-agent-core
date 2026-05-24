@@ -4,7 +4,8 @@
 // to obtain a usable Bearer token; this helper handles the refresh dance
 // transparently when the stored access token is expired.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
+import { AGENT_CORE_SCHEMA } from "../constants";
 
 function readEnv(name: string): string | undefined {
   const g = globalThis as {
@@ -14,8 +15,10 @@ function readEnv(name: string): string | undefined {
   return g.Deno?.env.get(name) ?? g.process?.env?.[name];
 }
 
-let cachedClient: SupabaseClient | null = null;
-function getSupabase(): SupabaseClient {
+// any: Supabase's generated DB types are not available here; the "agent_core"
+// string literal still narrows the schema target. The row shape is loose.
+let cachedClient: ReturnType<typeof createClient<any, "agent_core">> | null = null;
+function getSupabase() {
   if (cachedClient) return cachedClient;
   const url = readEnv("SUPABASE_URL");
   const key = readEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -24,7 +27,10 @@ function getSupabase(): SupabaseClient {
       "connections: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set"
     );
   }
-  cachedClient = createClient(url, key, { auth: { persistSession: false } });
+  cachedClient = createClient(url, key, {
+    auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
+  });
   return cachedClient;
 }
 

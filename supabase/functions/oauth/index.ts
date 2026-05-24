@@ -30,6 +30,9 @@ import {
 
 declare const Deno: { env: { get(name: string): string | undefined } };
 
+// mirrors packages/runtime/src/constants.ts
+const AGENT_CORE_SCHEMA = "agent_core";
+
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "authorization, content-type",
@@ -52,7 +55,10 @@ function getSupabase() {
   if (!url || !key) {
     throw new Error("oauth: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");
   }
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createClient(url, key, {
+    auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
+  });
 }
 
 interface ProviderEnv {

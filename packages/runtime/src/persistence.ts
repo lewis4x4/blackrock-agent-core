@@ -15,6 +15,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { TaskGraph, TokenUsage, ToolResult } from "./types";
+import { AGENT_CORE_SCHEMA } from "./constants";
 
 function readEnv(name: string): string | undefined {
   const g = globalThis as {
@@ -24,13 +25,18 @@ function readEnv(name: string): string | undefined {
   return g.Deno?.env.get(name) ?? g.process?.env?.[name];
 }
 
-let cachedClient: SupabaseClient | null = null;
-function getSupabase(): SupabaseClient | null {
+// any: Supabase's generated DB types are not available here; the "agent_core"
+// string literal still narrows the schema target. The row shape is loose.
+let cachedClient: ReturnType<typeof createClient<any, "agent_core">> | null = null;
+function getSupabase(): ReturnType<typeof createClient<any, "agent_core">> | null {
   if (cachedClient) return cachedClient;
   const url = readEnv("SUPABASE_URL");
   const key = readEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) return null;
-  cachedClient = createClient(url, key, { auth: { persistSession: false } });
+  cachedClient = createClient(url, key, {
+    auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
+  });
   return cachedClient;
 }
 

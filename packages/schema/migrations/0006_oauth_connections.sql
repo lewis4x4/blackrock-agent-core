@@ -1,24 +1,14 @@
 -- Agent Core — migration 0006 — OAuth-backed connected integrations.
--- Adds the tenant_connections table for storing OAuth access/refresh tokens as
--- Vault-pointer refs (never raw token material), plus oauth_states for the
--- CSRF state nonce + PKCE verifier during the authorize → callback round-trip.
--- All RPCs are SECURITY DEFINER and grant-locked to service_role: the browser
--- never touches token material or vault.* directly.
 
--- Connections --------------------------------------------------------------
--- One row per (tenant, provider, account_label). secret_ref points into
--- vault.secrets and holds the **access** token; refresh_secret_ref holds the
--- **refresh** token. Both are nullable to support providers that don't issue
--- a refresh token, but for hubspot/m365 we always populate both.
-create table if not exists tenant_connections (
+create table if not exists agent_core.tenant_connections (
   id                  uuid primary key default gen_random_uuid(),
-  tenant_id           uuid not null references tenants(id) on delete cascade,
-  provider            text not null,                 -- 'hubspot' | 'm365' | ...
+  tenant_id           uuid not null references agent_core.tenants(id) on delete cascade,
+  provider            text not null,
   account_label       text not null default 'default',
-  secret_ref          uuid,                          -- access token (vault id)
-  refresh_secret_ref  uuid,                          -- refresh token (vault id)
+  secret_ref          uuid,
+  refresh_secret_ref  uuid,
   scopes              text[] not null default '{}',
-  expires_at          timestamptz,                   -- access-token expiry
+  expires_at          timestamptz,
   status              text not null default 'active' check (status in ('active','expired','revoked')),
   meta                jsonb not null default '{}',
   created_at          timestamptz not null default now(),
@@ -26,42 +16,31 @@ create table if not exists tenant_connections (
   unique (tenant_id, provider, account_label)
 );
 
--- OAuth state nonces -------------------------------------------------------
--- One row per outbound authorize redirect. The state goes to the IdP and comes
--- back on the callback; the code_verifier closes the PKCE round-trip. Rows are
--- short-lived (expires_at default = now()+10min) and cleaned up on callback.
-create table if not exists oauth_states (
+create table if not exists agent_core.oauth_states (
   state          text primary key,
-  tenant_id      uuid not null references tenants(id) on delete cascade,
+  tenant_id      uuid not null references agent_core.tenants(id) on delete cascade,
   provider       text not null,
   account_label  text not null default 'default',
-  code_verifier  text not null,                     -- PKCE verifier
+  code_verifier  text not null,
   redirect_uri   text not null,
   created_at     timestamptz not null default now(),
   expires_at     timestamptz not null default (now() + interval '10 minutes')
 );
 
 create index if not exists idx_tenant_connections_tenant
-  on tenant_connections(tenant_id, provider);
+  on agent_core.tenant_connections(tenant_id, provider);
 create index if not exists idx_oauth_states_expires
-  on oauth_states(expires_at);
+  on agent_core.oauth_states(expires_at);
 
--- RLS ----------------------------------------------------------------------
-alter table tenant_connections enable row level security;
-alter table oauth_states       enable row level security;
+alter table agent_core.tenant_connections enable row level security;
+alter table agent_core.oauth_states       enable row level security;
 
-create policy tenant_isolation on tenant_connections
-  for all using (tenant_id = current_tenant()) with check (tenant_id = current_tenant());
-create policy tenant_isolation on oauth_states
-  for all using (tenant_id = current_tenant()) with check (tenant_id = current_tenant());
+create policy tenant_isolation on agent_core.tenant_connections
+  for all using (tenant_id = agent_core.current_tenant()) with check (tenant_id = agent_core.current_tenant());
+create policy tenant_isolation on agent_core.oauth_states
+  for all using (tenant_id = agent_core.current_tenant()) with check (tenant_id = agent_core.current_tenant());
 
--- store_tenant_connection ----------------------------------------------------
--- Writes access + refresh tokens into Vault, upserts the pointer row, returns
--- the connection id. Designed to be called from the OAuth callback edge
--- function (as service_role). On conflict (tenant, provider, account_label)
--- we overwrite secret refs and metadata — the previous vault entries are left
--- in place; explicit rotation will land in a later migration.
-create or replace function store_tenant_connection(
+create or replace function agent_core.store_tenant_connection(
   p_tenant         uuid,
   p_provider       text,
   p_account_label  text,
@@ -73,7 +52,7 @@ create or replace function store_tenant_connection(
 ) returns uuid
   language plpgsql
   security definer
-  set search_path = public, vault
+  set search_path = agent_core, vault
 as $$
 declare
   v_access_name  text;
@@ -113,18 +92,12 @@ begin
 end;
 $$;
 
-revoke all on function store_tenant_connection(uuid, text, text, text, text, text[], timestamptz, jsonb)
+revoke all on function agent_core.store_tenant_connection(uuid, text, text, text, text, text[], timestamptz, jsonb)
   from public, anon, authenticated;
-grant execute on function store_tenant_connection(uuid, text, text, text, text, text[], timestamptz, jsonb)
+grant execute on function agent_core.store_tenant_connection(uuid, text, text, text, text, text[], timestamptz, jsonb)
   to service_role;
 
--- resolve_tenant_connection -------------------------------------------------
--- Returns the decrypted access + refresh tokens (and metadata) for a tenant's
--- connection. Tools call this from the runtime to authenticate API calls.
--- Returning a SETOF row (rather than two scalar functions) keeps the call
--- atomic — no chance of mixing access and refresh tokens from different
--- connections.
-create or replace function resolve_tenant_connection(
+create or replace function agent_core.resolve_tenant_connection(
   p_tenant         uuid,
   p_provider       text,
   p_account_label  text default 'default'
@@ -139,7 +112,7 @@ create or replace function resolve_tenant_connection(
 )
   language sql
   security definer
-  set search_path = public, vault
+  set search_path = agent_core, vault
 as $$
   select
     tc.id,
@@ -158,24 +131,20 @@ as $$
   limit 1;
 $$;
 
-revoke all on function resolve_tenant_connection(uuid, text, text)
+revoke all on function agent_core.resolve_tenant_connection(uuid, text, text)
   from public, anon, authenticated;
-grant execute on function resolve_tenant_connection(uuid, text, text)
+grant execute on function agent_core.resolve_tenant_connection(uuid, text, text)
   to service_role;
 
--- update_tenant_connection_tokens -------------------------------------------
--- After a refresh exchange, write a NEW access-token vault entry and (when
--- the IdP rotates it) a new refresh-token entry, then update the pointer row.
--- Old vault rows are NOT deleted yet — rotation/cleanup is a later migration.
-create or replace function update_tenant_connection_tokens(
+create or replace function agent_core.update_tenant_connection_tokens(
   p_connection_id   uuid,
   p_access_token    text,
-  p_refresh_token   text,            -- pass NULL when the IdP didn't rotate
+  p_refresh_token   text,
   p_expires_at      timestamptz
 ) returns void
   language plpgsql
   security definer
-  set search_path = public, vault
+  set search_path = agent_core, vault
 as $$
 declare
   v_tenant   uuid;
@@ -215,14 +184,9 @@ begin
 end;
 $$;
 
-revoke all on function update_tenant_connection_tokens(uuid, text, text, timestamptz)
+revoke all on function agent_core.update_tenant_connection_tokens(uuid, text, text, timestamptz)
   from public, anon, authenticated;
-grant execute on function update_tenant_connection_tokens(uuid, text, text, timestamptz)
+grant execute on function agent_core.update_tenant_connection_tokens(uuid, text, text, timestamptz)
   to service_role;
-
--- NOTE: tenant_connections stores ONLY secret_ref / refresh_secret_ref (Vault
--- pointers). Raw access/refresh tokens live in vault.secrets and are resolved
--- server-side by the OAuth Edge Function and connected tools via the
--- SECURITY DEFINER RPCs above. They are NEVER exposed to the browser.
 
 -- [PART 1 COMPLETE]

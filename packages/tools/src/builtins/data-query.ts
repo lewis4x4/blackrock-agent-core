@@ -2,6 +2,7 @@
 // Never bundle into a browser/UI build.
 import { createClient } from "@supabase/supabase-js";
 import type { Tool } from "../registry";
+import { AGENT_CORE_SCHEMA } from "../constants";
 
 /**
  * Cross-runtime env reader (matches runtime/src/context.ts).
@@ -58,7 +59,9 @@ const QUERY_TIMEOUT_MS = 30_000;
 // PostgREST .select() and .eq() calls without enabling SQL injection.
 const IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-let cachedClient: ReturnType<typeof createClient> | null = null;
+// any: Supabase's generated DB types are not available here; the "agent_core"
+// string literal still narrows the schema target. The row shape is loose.
+let cachedClient: ReturnType<typeof createClient<any, "agent_core">> | null = null;
 function getSupabase() {
   if (cachedClient) return cachedClient;
   const supabaseUrl = readEnv("SUPABASE_URL");
@@ -70,6 +73,7 @@ function getSupabase() {
   }
   cachedClient = createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
   return cachedClient;
 }

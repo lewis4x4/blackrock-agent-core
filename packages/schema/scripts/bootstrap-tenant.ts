@@ -7,7 +7,9 @@
 //     --provider anthropic --api-key sk-ant-... \
 //     --tools http_request,web_search,doc_generate,data_query
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
+
+const AGENT_CORE_SCHEMA = 'agent_core';
 
 type Provider = 'anthropic' | 'openai';
 
@@ -87,8 +89,10 @@ interface TenantRow {
   slug: string;
 }
 
+// any: Supabase's generated DB types are not available in scripts; the
+// "agent_core" string literal still narrows the .schema() surface.
 async function insertTenant(
-  supabase: SupabaseClient,
+  supabase: ReturnType<typeof createClient<any, "agent_core">>,
   slug: string,
   displayName: string,
 ): Promise<TenantRow> {
@@ -104,7 +108,7 @@ async function insertTenant(
 }
 
 async function storeCredential(
-  supabase: SupabaseClient,
+  supabase: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
   provider: Provider,
   apiKey: string,
@@ -120,7 +124,7 @@ async function storeCredential(
 }
 
 async function enableTools(
-  supabase: SupabaseClient,
+  supabase: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
   toolKeys: readonly string[],
 ): Promise<void> {
@@ -150,6 +154,7 @@ async function main(): Promise<void> {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
 
   const tenant = await insertTenant(supabase, args.slug, args.displayName);

@@ -14,13 +14,15 @@
 //
 // Output mirrors verify-isolation.ts so CI greps work uniformly.
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import {
   buildAuthorizeUrl,
   exchangeCode,
   generatePkcePair,
   generateState,
-} from '@blackrock/agent-runtime';
+} from '@blackrock-ai/agent-runtime';
+
+const AGENT_CORE_SCHEMA = 'agent_core';
 
 let passes = 0;
 let fails = 0;
@@ -191,8 +193,11 @@ async function checkLiveSupabase(): Promise<void> {
     park('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set');
     return;
   }
-  const svc: SupabaseClient = createClient(url, serviceKey, {
+  // any: Supabase's generated DB types are not available in scripts; the
+  // "agent_core" string literal still narrows the .schema() surface.
+  const svc: ReturnType<typeof createClient<any, "agent_core">> = createClient(url, serviceKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
 
   // Service role: every RPC must exist (we invoke with bogus arguments and
@@ -213,8 +218,12 @@ async function checkLiveSupabase(): Promise<void> {
   }
 
   if (anonKey) {
-    const anon: SupabaseClient = createClient(url, anonKey, {
+    // any: Supabase's generated DB type is unavailable in scripts; the
+    // "agent_core" string literal still narrows the .schema('agent_core')
+    // surface but the row shape is intentionally loose.
+    const anon: ReturnType<typeof createClient<any, "agent_core">> = createClient(url, anonKey, {
       auth: { persistSession: false },
+      db: { schema: AGENT_CORE_SCHEMA },
     });
     const { error } = await anon.rpc('resolve_tenant_connection', {
       p_tenant: '00000000-0000-0000-0000-000000000000',

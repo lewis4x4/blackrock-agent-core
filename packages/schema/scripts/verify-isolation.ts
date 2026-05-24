@@ -32,9 +32,11 @@
 // rows created via store_tenant_credential are left in place (matches the
 // deferred Vault cleanup posture in migration 0002).
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
-import { loadTenantContext } from '@blackrock/agent-runtime';
+import { loadTenantContext } from '@blackrock-ai/agent-runtime';
+
+const AGENT_CORE_SCHEMA = 'agent_core';
 
 const PARK_LINE =
   '[PARKED — live Supabase isolation verification: needs a running Supabase project]';
@@ -58,8 +60,10 @@ function shortKey(s: string): string {
   return `${s.slice(0, 6)}...`;
 }
 
+// any: Supabase's generated DB types are not available in scripts; the
+// "agent_core" string literal still narrows the .schema('agent_core') surface.
 async function isReachable(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
     const { error } = await svc.from('tenants').select('id').limit(1);
@@ -76,7 +80,7 @@ interface TenantRow {
 }
 
 async function insertTenant(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
   slug: string,
   displayName: string,
 ): Promise<TenantRow> {
@@ -91,7 +95,7 @@ async function insertTenant(
 }
 
 async function storeCredential(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
   provider: string,
   secret: string,
@@ -110,7 +114,7 @@ async function storeCredential(
 }
 
 async function resolveSecret(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
   provider: string,
 ): Promise<string | null> {
@@ -129,7 +133,7 @@ async function resolveSecret(
 }
 
 async function setToolRow(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
   toolKey: string,
   enabled: boolean,
@@ -147,7 +151,7 @@ async function setToolRow(
 }
 
 async function deleteTenant(
-  svc: SupabaseClient,
+  svc: ReturnType<typeof createClient<any, "agent_core">>,
   tenantId: string,
 ): Promise<void> {
   const { error } = await svc.from('tenants').delete().eq('id', tenantId);
@@ -171,6 +175,7 @@ async function main(): Promise<void> {
 
   const service = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
 
   const reach = await isReachable(service);
@@ -297,6 +302,7 @@ async function main(): Promise<void> {
     // ---------------------------------------------------------------------
     const anon = createClient(supabaseUrl, anonKey, {
       auth: { persistSession: false },
+      db: { schema: AGENT_CORE_SCHEMA },
     });
     const { data: anonData, error: anonErr } = await anon.rpc(
       'resolve_tenant_secret',

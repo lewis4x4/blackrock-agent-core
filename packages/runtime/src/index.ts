@@ -50,3 +50,5 @@ export type {
   PkcePair,
   TokenResponse,
 } from "./oauth";
+
+export { AGENT_CORE_SCHEMA } from "./constants";

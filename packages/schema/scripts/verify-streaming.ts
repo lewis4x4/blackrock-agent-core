@@ -6,7 +6,7 @@
 //      split mid-frame across chunk boundaries — the producer's stream
 //      can deliver bytes however it likes.
 //   3. parseSseFrame returns null (not throws) for empty / malformed input.
-//   4. The client-side asynciterable in @blackrock/agent-core (the shell
+//   4. The client-side asynciterable in @blackrock-ai/agent-core (the shell
 //      package) actually yields the events through its full read loop —
 //      this exercises createAgentClient end-to-end against a stub SSE body.
 //   5. Live-DB persistence: when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
@@ -20,7 +20,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { createAgentClient } from '@blackrock/agent-core';
+import { createAgentClient } from '@blackrock-ai/agent-core';
 import {
   finalizeRun,
   formatSse,
@@ -30,8 +30,10 @@ import {
   recordRunStart,
   recordToolResults,
   type AgentEvent,
-} from '@blackrock/agent-runtime';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+} from '@blackrock-ai/agent-runtime';
+import { createClient } from '@supabase/supabase-js';
+
+const AGENT_CORE_SCHEMA = 'agent_core';
 
 let passes = 0;
 let fails = 0;
@@ -189,8 +191,11 @@ async function checkLivePersistence(): Promise<void> {
     return;
   }
 
-  const supabase: SupabaseClient = createClient(url, serviceKey, {
+  // any: Supabase's generated DB types are not available in scripts; the
+  // "agent_core" string literal still narrows the .schema() surface.
+  const supabase: ReturnType<typeof createClient<any, "agent_core">> = createClient(url, serviceKey, {
     auth: { persistSession: false },
+    db: { schema: AGENT_CORE_SCHEMA },
   });
 
   // Confirm the migrations have landed — if `agent_runs` doesn't exist we

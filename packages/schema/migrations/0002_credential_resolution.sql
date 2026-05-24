@@ -10,7 +10,7 @@
 -- NOTE: on conflict we overwrite secret_ref with the new vault id but leave
 -- the previous vault secret in place for v1 — explicit rotation/cleanup will
 -- come in a later migration.
-create or replace function store_tenant_credential(
+create or replace function agent_core.store_tenant_credential(
   p_tenant   uuid,
   p_provider text,
   p_secret   text,
@@ -18,7 +18,7 @@ create or replace function store_tenant_credential(
 ) returns uuid
   language plpgsql
   security definer
-  set search_path = public, vault
+  set search_path = agent_core, vault
 as $$
 declare
   v_secret_name text := format('agent-core:%s:%s', p_tenant, p_provider);
@@ -39,9 +39,9 @@ begin
 end;
 $$;
 
-revoke all on function store_tenant_credential(uuid, text, text, jsonb)
+revoke all on function agent_core.store_tenant_credential(uuid, text, text, jsonb)
   from public, anon, authenticated;
-grant execute on function store_tenant_credential(uuid, text, text, jsonb)
+grant execute on function agent_core.store_tenant_credential(uuid, text, text, jsonb)
   to service_role;
 
 -- resolve_tenant_secret -----------------------------------------------------
@@ -50,13 +50,13 @@ grant execute on function store_tenant_credential(uuid, text, text, jsonb)
 -- accessible because this function runs as SECURITY DEFINER (owned by a role
 -- with vault access) — callers (service_role only) never touch the vault
 -- schema directly.
-create or replace function resolve_tenant_secret(
+create or replace function agent_core.resolve_tenant_secret(
   p_tenant   uuid,
   p_provider text
 ) returns text
   language sql
   security definer
-  set search_path = public, vault
+  set search_path = agent_core, vault
 as $$
   select ds.decrypted_secret
   from tenant_credentials tc
@@ -66,7 +66,7 @@ as $$
   limit 1;
 $$;
 
-revoke all on function resolve_tenant_secret(uuid, text)
+revoke all on function agent_core.resolve_tenant_secret(uuid, text)
   from public, anon, authenticated;
-grant execute on function resolve_tenant_secret(uuid, text)
+grant execute on function agent_core.resolve_tenant_secret(uuid, text)
   to service_role;

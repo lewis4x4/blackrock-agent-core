@@ -10,7 +10,7 @@
 // any assertion failure. The output format mirrors verify-isolation.ts so
 // CI scripts can grep for `[ok]` / `[fail]` lines uniformly.
 
-import { builtins } from '@blackrock/agent-tools';
+import { builtins } from '@blackrock-ai/agent-tools';
 
 let passes = 0;
 let fails = 0;

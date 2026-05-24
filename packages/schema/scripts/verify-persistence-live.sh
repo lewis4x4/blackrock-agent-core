@@ -86,28 +86,28 @@ declare
   v_tenant uuid := gen_random_uuid();
   v_run    uuid := gen_random_uuid();
 begin
-  insert into tenants(id, slug, display_name)
+  insert into agent_core.tenants(id, slug, display_name)
     values (v_tenant, 'verify-persistence', 'verify-persistence');
 
   -- recordRunStart
-  insert into agent_runs(id, tenant_id, model, model_provider, status)
+  insert into agent_core.agent_runs(id, tenant_id, model, model_provider, status)
     values (v_run, v_tenant, 'claude-sonnet-4-5', 'anthropic', 'running');
-  insert into agent_messages(run_id, tenant_id, role, content)
+  insert into agent_core.agent_messages(run_id, tenant_id, role, content)
     values (v_run, v_tenant, 'user', jsonb_build_object('text','probe'));
 
   -- recordMessage (assistant draft)
-  insert into agent_messages(run_id, tenant_id, role, content)
+  insert into agent_core.agent_messages(run_id, tenant_id, role, content)
     values (v_run, v_tenant, 'assistant',
             jsonb_build_object('kind','draft_answer','text','probe answer'));
 
   -- recordToolResults (one tool row)
-  insert into agent_messages(run_id, tenant_id, role, content)
+  insert into agent_core.agent_messages(run_id, tenant_id, role, content)
     values (v_run, v_tenant, 'tool',
             jsonb_build_object('tool','web_search','taskId','t1','ok',true,
                                'output', jsonb_build_object('results', '[]'::jsonb)));
 
   -- finalizeRun
-  update agent_runs
+  update agent_core.agent_runs
      set status='completed',
          tokens_in=42, tokens_out=24, cost_estimate=0.0042,
          task_graph='{"tasks":[]}'::jsonb,
@@ -115,7 +115,7 @@ begin
    where id = v_run;
 
   -- Read-back assertions.
-  if not exists(select 1 from agent_runs
+  if not exists(select 1 from agent_core.agent_runs
                 where id = v_run
                   and status='completed'
                   and tokens_in=42 and tokens_out=24
@@ -123,11 +123,11 @@ begin
                   and completed_at is not null) then
     raise exception 'agent_runs terminal state did not land';
   end if;
-  if (select count(*) from agent_messages where run_id = v_run) < 3 then
+  if (select count(*) from agent_core.agent_messages where run_id = v_run) < 3 then
     raise exception 'agent_messages did not accumulate to >=3 rows';
   end if;
 
-  delete from tenants where id = v_tenant; -- cascade cleans up
+  delete from agent_core.tenants where id = v_tenant; -- cascade cleans up
 end $$;
 SQL
 

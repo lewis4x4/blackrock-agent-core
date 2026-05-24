@@ -7,12 +7,12 @@
 -- payload: synthesized docs, screenshots, tool outputs that don't fit in
 -- jsonb, ingested files, etc.
 
-create table if not exists artifacts (
+create table if not exists agent_core.artifacts (
   id            uuid primary key default gen_random_uuid(),
-  tenant_id     uuid not null references tenants(id) on delete cascade,
+  tenant_id     uuid not null references agent_core.tenants(id) on delete cascade,
   -- Optional run linkage. Artifacts produced inside an agent run carry the
   -- run id; user-uploaded artifacts can leave it NULL.
-  run_id        uuid references agent_runs(id) on delete set null,
+  run_id        uuid references agent_core.agent_runs(id) on delete set null,
   kind          text not null check (length(kind) between 1 and 64),
   label         text not null check (length(label) between 1 and 256),
   content_type  text not null check (length(content_type) between 1 and 128),
@@ -24,20 +24,20 @@ create table if not exists artifacts (
 );
 
 create index if not exists idx_artifacts_tenant_created
-  on artifacts(tenant_id, created_at desc);
+  on agent_core.artifacts(tenant_id, created_at desc);
 create index if not exists idx_artifacts_run
-  on artifacts(run_id) where run_id is not null;
+  on agent_core.artifacts(run_id) where run_id is not null;
 
-alter table artifacts enable row level security;
+alter table agent_core.artifacts enable row level security;
 
-create policy tenant_isolation on artifacts
-  for all using (tenant_id = current_tenant()) with check (tenant_id = current_tenant());
+create policy tenant_isolation on agent_core.artifacts
+  for all using (tenant_id = agent_core.current_tenant()) with check (tenant_id = agent_core.current_tenant());
 
 -- store_artifact ------------------------------------------------------------
 -- Inserts the metadata pointer row. Designed to be called from the runtime
 -- AFTER the bytes have been uploaded to storage — the function does NOT
 -- itself write blob data. Returns the artifact id.
-create or replace function store_artifact(
+create or replace function agent_core.store_artifact(
   p_tenant        uuid,
   p_run           uuid,
   p_kind          text,
@@ -49,15 +49,11 @@ create or replace function store_artifact(
 ) returns uuid
   language plpgsql
   security definer
-  set search_path = public
+  set search_path = agent_core
 as $$
 declare
   v_row_id uuid;
 begin
-  -- Validate the storage_path starts with the tenant_id so a hostile caller
-  -- can't register a pointer to another tenant's blob. Also reject any
-  -- `..` segment so a path-traversal value like `<tenant_id>/../other/x`
-  -- can't sneak past the prefix check.
   if p_storage_path !~ ('^' || p_tenant::text || '/[^/]') then
     raise exception 'storage_path must begin with tenant_id/<segment> (got %)', p_storage_path;
   end if;
@@ -76,16 +72,13 @@ begin
 end;
 $$;
 
-revoke all on function store_artifact(uuid, uuid, text, text, text, bigint, text, jsonb)
+revoke all on function agent_core.store_artifact(uuid, uuid, text, text, text, bigint, text, jsonb)
   from public, anon, authenticated;
-grant execute on function store_artifact(uuid, uuid, text, text, text, bigint, text, jsonb)
+grant execute on function agent_core.store_artifact(uuid, uuid, text, text, text, bigint, text, jsonb)
   to service_role;
 
 -- list_artifacts ------------------------------------------------------------
--- Returns the N most recent artifact metadata rows for a tenant, optionally
--- filtered by run_id. Read-only — no storage URLs are signed here; callers
--- mint signed URLs from the storage path on demand.
-create or replace function list_artifacts(
+create or replace function agent_core.list_artifacts(
   p_tenant   uuid,
   p_run      uuid default null,
   p_limit    int  default 50
@@ -102,7 +95,7 @@ create or replace function list_artifacts(
 )
   language sql
   security definer
-  set search_path = public
+  set search_path = agent_core
 as $$
   select a.id, a.run_id, a.kind, a.label, a.content_type, a.byte_size,
          a.storage_path, a.meta, a.created_at
@@ -113,9 +106,9 @@ as $$
    limit greatest(1, least(coalesce(p_limit, 50), 500));
 $$;
 
-revoke all on function list_artifacts(uuid, uuid, int)
+revoke all on function agent_core.list_artifacts(uuid, uuid, int)
   from public, anon, authenticated;
-grant execute on function list_artifacts(uuid, uuid, int)
+grant execute on function agent_core.list_artifacts(uuid, uuid, int)
   to service_role;
 
 -- NOTE: bytes live in Supabase Storage. The artifacts table only holds
