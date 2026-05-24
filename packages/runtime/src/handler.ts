@@ -1,4 +1,4 @@
-import { ToolRegistry, builtins } from "@blackrock/agent-tools";
+import { ToolRegistry, builtins } from "@blackrock-ai/agent-tools";
 import { plan } from "./planner";
 import { execute } from "./executor";
 import { synthesize } from "./synthesizer";
@@ -92,7 +92,7 @@ function randomRunId(): string {
  * SPRINT 3: the response is now `text/event-stream`. Each phase of the
  * orchestrator emits a typed event from `./events` — plan, tool_start,
  * tool_end, answer, critic, final, error. Consumers should use
- * `createAgentClient` from `@blackrock/agent-core` (the shell package) to
+ * `createAgentClient` from `@blackrock-ai/agent-core` (the shell package) to
  * consume it.
  *
  * Context resolution order, per request:

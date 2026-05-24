@@ -10,10 +10,10 @@
       },
     },
     "packages/runtime": {
-      "name": "@blackrock/agent-runtime",
+      "name": "@blackrock-ai/agent-runtime",
       "version": "0.1.0",
       "dependencies": {
-        "@blackrock/agent-tools": "workspace:*",
+        "@blackrock-ai/agent-tools": "workspace:*",
         "@supabase/supabase-js": "^2.45.0",
       },
       "devDependencies": {
@@ -21,23 +21,21 @@
       },
     },
     "packages/schema": {
-      "name": "@blackrock/agent-schema",
+      "name": "@blackrock-ai/agent-schema",
       "version": "0.1.0",
-      "dependencies": {
-        "@blackrock/agent-core": "workspace:*",
-        "@blackrock/agent-runtime": "workspace:*",
-        "@blackrock/agent-tools": "workspace:*",
-        "@supabase/supabase-js": "^2.45.0",
-      },
       "devDependencies": {
+        "@blackrock-ai/agent-core": "workspace:*",
+        "@blackrock-ai/agent-runtime": "workspace:*",
+        "@blackrock-ai/agent-tools": "workspace:*",
+        "@supabase/supabase-js": "^2.45.0",
         "@types/node": "^20.0.0",
       },
     },
     "packages/shell": {
-      "name": "@blackrock/agent-core",
+      "name": "@blackrock-ai/agent-core",
       "version": "0.1.0",
       "dependencies": {
-        "@blackrock/agent-runtime": "workspace:*",
+        "@blackrock-ai/agent-runtime": "workspace:*",
         "lucide-react": "^0.383.0",
       },
       "devDependencies": {
@@ -51,7 +49,7 @@
       },
     },
     "packages/tools": {
-      "name": "@blackrock/agent-tools",
+      "name": "@blackrock-ai/agent-tools",
       "version": "0.1.0",
       "dependencies": {
         "@supabase/supabase-js": "^2.45.0",
@@ -62,13 +60,13 @@
     },
   },
   "packages": {
-    "@blackrock/agent-core": ["@blackrock/agent-core@workspace:packages/shell"],
+    "@blackrock-ai/agent-core": ["@blackrock-ai/agent-core@workspace:packages/shell"],
 
-    "@blackrock/agent-runtime": ["@blackrock/agent-runtime@workspace:packages/runtime"],
+    "@blackrock-ai/agent-runtime": ["@blackrock-ai/agent-runtime@workspace:packages/runtime"],
 
-    "@blackrock/agent-schema": ["@blackrock/agent-schema@workspace:packages/schema"],
+    "@blackrock-ai/agent-schema": ["@blackrock-ai/agent-schema@workspace:packages/schema"],
 
-    "@blackrock/agent-tools": ["@blackrock/agent-tools@workspace:packages/tools"],
+    "@blackrock-ai/agent-tools": ["@blackrock-ai/agent-tools@workspace:packages/tools"],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.27.7", "", { "os": "aix", "cpu": "ppc64" }, "sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg=="],
 

@@ -1,4 +1,4 @@
-import type { ToolRegistry } from "@blackrock/agent-tools";
+import type { ToolRegistry } from "@blackrock-ai/agent-tools";
 
 export type ModelProvider = "anthropic" | "openai";
 

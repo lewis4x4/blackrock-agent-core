@@ -1,20 +1,28 @@
 {
-  "name": "@blackrock/agent-schema",
+  "name": "@blackrock-ai/agent-schema",
   "version": "0.1.0",
   "description": "Agent Core database migrations — applied into each client's own Supabase project.",
   "files": ["migrations"],
   "scripts": {
     "build": "echo 'schema: no build step'",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@blackrock/agent-core": "workspace:*",
-    "@blackrock/agent-runtime": "workspace:*",
-    "@blackrock/agent-tools": "workspace:*",
-    "@supabase/supabase-js": "^2.45.0"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
   },
   "devDependencies": {
+    "@blackrock-ai/agent-core": "workspace:*",
+    "@blackrock-ai/agent-runtime": "workspace:*",
+    "@blackrock-ai/agent-tools": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0",
     "@types/node": "^20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackrock-ai/blackrock-agent-core.git",
+    "directory": "packages/schema"
+  },
+  "homepage": "https://github.com/blackrock-ai/blackrock-agent-core#readme",
+  "bugs": {
+    "url": "https://github.com/blackrock-ai/blackrock-agent-core/issues"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

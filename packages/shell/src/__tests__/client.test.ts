@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { formatSse } from "@blackrock/agent-runtime";
-import type { AgentEvent } from "@blackrock/agent-runtime";
+import { formatSse } from "@blackrock-ai/agent-runtime";
+import type { AgentEvent } from "@blackrock-ai/agent-runtime";
 import { createAgentClient } from "../client";
 
 const ENDPOINT = "https://example.test/agent";

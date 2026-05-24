@@ -1,5 +1,5 @@
 {
-  "name": "@blackrock/agent-core",
+  "name": "@blackrock-ai/agent-core",
   "version": "0.1.0",
   "description": "The Agent Core workspace shell — embeddable AI command-center UI.",
   "type": "module",
@@ -17,10 +17,11 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
-    "@blackrock/agent-runtime": "workspace:*",
+    "@blackrock-ai/agent-runtime": "workspace:*",
     "lucide-react": "^0.383.0"
   },
   "peerDependencies": {
@@ -31,6 +32,15 @@
     "@types/bun": "^1.1.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackrock-ai/blackrock-agent-core.git",
+    "directory": "packages/shell"
+  },
+  "homepage": "https://github.com/blackrock-ai/blackrock-agent-core#readme",
+  "bugs": {
+    "url": "https://github.com/blackrock-ai/blackrock-agent-core/issues"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"

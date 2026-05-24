@@ -1,5 +1,5 @@
-import { parseSseChunk } from "@blackrock/agent-runtime";
-import type { AgentEvent } from "@blackrock/agent-runtime";
+import { parseSseChunk } from "@blackrock-ai/agent-runtime";
+import type { AgentEvent } from "@blackrock-ai/agent-runtime";
 
 /**
  * Inputs for a single agent run.
