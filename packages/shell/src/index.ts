@@ -9,6 +9,8 @@ export type {
   NavItem,
 } from "./types";
 export { createAgentClient } from "./client";
+export { hexA, themeVars, BrandHeader, Toast, BrandMark } from "./theme";
+export type { ToastState } from "./theme";
 export type {
   AgentClient,
   CreateAgentClientOptions,

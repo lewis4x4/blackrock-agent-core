@@ -25,6 +25,7 @@ packages=(
   "tools:@blackrock-ai/agent-tools:packages/tools:dist"
   "runtime:@blackrock-ai/agent-runtime:packages/runtime:dist"
   "shell:@blackrock-ai/agent-core:packages/shell:dist"
+  "admin:@blackrock-ai/agent-admin:packages/admin:dist"
   "schema:@blackrock-ai/agent-schema:packages/schema:migrations"
 )
 
@@ -69,6 +70,7 @@ printf '\nPublish commands (run manually, in order):\n'
 printf '%s\n' "cd packages/tools  && npm publish && cd ../.."
 printf '%s\n' "cd packages/runtime && npm publish && cd ../.."
 printf '%s\n' "cd packages/shell  && npm publish && cd ../.."
+printf '%s\n' "cd packages/admin  && npm publish && cd ../.."
 printf '%s\n' "cd packages/schema && npm publish && cd ../.."
 
 if [[ "$failures" -gt 0 ]]; then

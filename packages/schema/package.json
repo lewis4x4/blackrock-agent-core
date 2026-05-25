@@ -1,11 +1,12 @@
 {
   "name": "@blackrock-ai/agent-schema",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Agent Core database migrations — applied into each client's own Supabase project.",
   "files": ["migrations"],
   "scripts": {
     "build": "echo 'schema: no build step'",
     "typecheck": "tsc --noEmit",
+    "verify:admin": "bun packages/schema/scripts/verify-admin.ts",
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {

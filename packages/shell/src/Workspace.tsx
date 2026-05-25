@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Mic, Sparkles, ChevronDown, Cpu, ArrowUp } from "lucide-react";
 import type { WorkspaceProps, ToolDef, TenantConfig } from "./types";
+import { BrandHeader, BrandMark, Toast, type ToastState, hexA, themeVars } from "./theme";
 
 /* The multi-model router. In production "Auto" is the planner picking a
  * model per subtask; here it is a selector so the concept is visible. */
@@ -11,10 +12,6 @@ const MODELS = [
   { id: "gpt", label: "GPT", desc: "Structured + code generation" },
 ];
 
-const hexA = (hex: string, a: number): string => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-};
 
 const countConnected = (cfg: TenantConfig): number =>
   cfg.categories.reduce(
@@ -41,9 +38,7 @@ export function Workspace({ config, onLaunch, onSend }: WorkspaceProps) {
   const [model, setModel] = useState(MODELS[0]!);
   const [modelOpen, setModelOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [toast, setToast] = useState<{ id: number; msg: string; sub: string } | null>(
-    null
-  );
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -84,13 +79,7 @@ export function Workspace({ config, onLaunch, onSend }: WorkspaceProps) {
   return (
     <div
       className="ws"
-      style={
-        {
-          "--ac": ac,
-          "--acSoft": hexA(ac, 0.14),
-          "--acGlow": hexA(ac, 0.3),
-        } as React.CSSProperties
-      }
+      style={themeVars(ac)}
     >
       <style>{CSS}</style>
       <div className="glow" />
@@ -98,7 +87,7 @@ export function Workspace({ config, onLaunch, onSend }: WorkspaceProps) {
       {/* ---------------- nav rail ---------------- */}
       <aside className="rail">
         <div className="rail-mark" title="BlackRock AI · Agent Core">
-          <Sparkles size={18} strokeWidth={2.2} />
+          <BrandMark />
         </div>
         <button className="rail-new" onClick={() => launch({ name: "New session" } as ToolDef)}>
           <Plus size={20} strokeWidth={2.4} />
@@ -128,15 +117,7 @@ export function Workspace({ config, onLaunch, onSend }: WorkspaceProps) {
       {/* ---------------- main ---------------- */}
       <main className="main">
         <div className="hero">
-          <div className="eyebrow fu" style={{ animationDelay: ".05s" }}>
-            <span className="eyebrow-dot" /> AGENT CORE — BLACKROCK AI
-          </div>
-          <h1 className="title fu" style={{ animationDelay: ".10s" }}>
-            {config.product}
-          </h1>
-          <p className="subtitle fu" style={{ animationDelay: ".15s" }}>
-            {config.tagline}
-          </p>
+          <BrandHeader config={config} />
 
           {/* composer */}
           <div
@@ -312,15 +293,7 @@ export function Workspace({ config, onLaunch, onSend }: WorkspaceProps) {
         </footer>
       </main>
 
-      {toast && (
-        <div className="toast" key={toast.id}>
-          <span className="toast-dot" />
-          <span className="toast-text">
-            <strong>{toast.msg}</strong>
-            <span>{toast.sub}</span>
-          </span>
-        </div>
-      )}
+      {toast && <Toast toast={toast} />}
     </div>
   );
 }

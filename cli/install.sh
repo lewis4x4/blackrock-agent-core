@@ -56,7 +56,7 @@ run_cmd() {
 }
 
 step() {
-  echo "==> [$1/12] $2"
+  echo "==> [$1/13] $2"
 }
 
 step 1 "Load config"
@@ -130,6 +130,7 @@ pkgs=(
   "@blackrock-ai/agent-core"
   "@blackrock-ai/agent-runtime"
   "@blackrock-ai/agent-tools"
+  "@blackrock-ai/agent-admin"
   "@blackrock-ai/agent-schema"
 )
 
@@ -334,6 +335,42 @@ else
   fi
 fi
 
+echo "==> [8.5/13] Deploy auth-jwt Edge Function"
+AUTH_JWT_SOURCE="$REPO_ROOT/supabase/functions/auth-jwt/index.ts"
+AUTH_JWT_TARGET_DIR="$TARGET_REPO/supabase/functions/auth-jwt"
+AUTH_JWT_TARGET="$AUTH_JWT_TARGET_DIR/index.ts"
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "[dry-run] would copy $AUTH_JWT_SOURCE -> $AUTH_JWT_TARGET"
+  echo "[dry-run] would run: cd '$TARGET_REPO' && supabase functions deploy auth-jwt"
+  echo "[dry-run] MANUAL: enable auth-jwt hook in Supabase dashboard (Settings → Authentication → Hooks → Before-token-issued)"
+  echo "[dry-run] then set secret: supabase secrets set SUPABASE_AUTH_HOOK_SECRET=<your-shared-secret>"
+else
+  mkdir -p "$AUTH_JWT_TARGET_DIR"
+  cp "$AUTH_JWT_SOURCE" "$AUTH_JWT_TARGET"
+  if (
+    cd "$TARGET_REPO"
+    supabase functions deploy auth-jwt
+  ); then
+    echo "Edge Function deployed: auth-jwt"
+  else
+    echo "WARNING: supabase functions deploy auth-jwt failed."
+    echo "You can re-deploy manually with: cd '$TARGET_REPO' && supabase functions deploy auth-jwt"
+  fi
+
+  echo "Set secret for auth hook verification (required):"
+  echo "  supabase secrets set SUPABASE_AUTH_HOOK_SECRET=<your-shared-secret> --project-ref $SUPABASE_PROJECT_REF"
+
+  read -r -p "MANUAL: enable the auth-jwt hook in your Supabase dashboard at Settings → Authentication → Hooks → Before-token-issued → select 'auth-jwt'. Confirm? [y/N] " confirm_hook
+  case "${confirm_hook,,}" in
+    y|yes)
+      ;;
+    *)
+      echo "Cannot proceed without auth-jwt hook confirmation. Re-run after enabling the hook." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 step 9 "Scaffold config + mount snippet"
 if [[ "$DRY_RUN" == "true" ]]; then
   bun "$SCRIPT_DIR/mount-shell.ts" --dry-run --config "$CONFIG_PATH"
@@ -456,6 +493,7 @@ else
           "@blackrock-ai/agent-core": $pkgAgentCore,
           "@blackrock-ai/agent-runtime": $pkgAgentRuntime,
           "@blackrock-ai/agent-tools": $pkgAgentTools,
+          "@blackrock-ai/agent-admin": "0.1.0",
           "@blackrock-ai/agent-schema": $pkgAgentSchema
         },
         migrationsApplied: $migrationsApplied
@@ -491,6 +529,7 @@ PY
     "@blackrock-ai/agent-core": "0.1.0",
     "@blackrock-ai/agent-runtime": "0.1.0",
     "@blackrock-ai/agent-tools": "0.1.0",
+    "@blackrock-ai/agent-admin": "0.1.0",
     "@blackrock-ai/agent-schema": "0.1.0"
   },
   "migrationsApplied": $migrations_applied

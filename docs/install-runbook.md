@@ -59,3 +59,18 @@ Run target app, open mounted route, submit a request, confirm SSE stream returns
 - **`agent_core schema not in exposed schemas`**: complete Step 6 in dashboard.
 - **Migration duplicate object conflict**: renumbering/timestamp conflict; re-run prepare-migrations with a fresh timestamp seed.
 - **Vault extension missing**: enable `supabase_vault` in dashboard extensions.
+
+## Appendix — Sprint 6 upgrade for existing 0.1.x installs (target: 0.2.0)
+
+1. Pull latest `blackrock-agent-core` and ensure your host app is ready for the lockstep `0.2.0` package set.
+2. Apply migrations **0008 through 0016** in order.
+3. Re-install npm packages so host and schema clients pick up the new admin surfaces.
+4. Re-deploy the `agent` Edge Function bundle.
+5. Deploy the new `auth-jwt` Edge Function (`supabase/functions/auth-jwt/index.ts`).
+6. Set hook secret:
+   - `supabase secrets set SUPABASE_AUTH_HOOK_SECRET=<shared-secret> --project-ref <ref>`
+7. In Supabase dashboard enable hook:
+   - `Settings → Authentication → Hooks → Before-token-issued → auth-jwt`
+8. Insert first superadmin row (run as an authenticated admin user context):
+   - `insert into agent_core.admin_users (user_id, tenant_id, role) values (auth.uid(), null, 'superadmin')`
+9. Mount `<Admin />` in your host app and wire it to the new admin RPC surface.
